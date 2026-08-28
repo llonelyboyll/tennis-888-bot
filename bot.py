@@ -11,12 +11,10 @@ def set_telegram_webhook():
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook"
         railway_url = "https://tennis-888-bot-production.up.railway.app/webhook"
         try:
-            resp = requests.post(url, json={"url": railway_url})
-            print("Webhook auto-set response:", resp.text)
+            requests.post(url, json={"url": railway_url})
         except Exception as e:
-            print(f"Lỗi set webhook tự động: {e}")
+            print(f"Lỗi set webhook: {e}")
 
-# Gọi tự động khi khởi động server
 set_telegram_webhook()
 
 def send_telegram_message(chat_id, text):
@@ -25,8 +23,8 @@ def send_telegram_message(chat_id, text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": chat_id,
-        "text": text,
-        "parse_mode": "Markdown"
+        "text": text
+        # Bỏ parse_mode để tránh lỗi định dạng ký tự đặc biệt
     }
     try:
         requests.post(url, json=payload)
@@ -46,18 +44,18 @@ def webhook():
             text = data["message"].get("text", "").strip()
             
             if text.startswith("/start"):
-                send_telegram_message(chat_id, "🎾 Chào anh! Hãy nhập tên cặp đấu (Ví dụ: `Djokovic vs Alcaraz`) để hệ thống quét live và dự đoán tỷ số.")
+                send_telegram_message(chat_id, "Chao anh! Hay nhap ten cap dau (Vi du: Djokovic vs Alcaraz) de he thong quet live va du doan ty so.")
                 return "OK", 200
             
             if text:
                 player_match = text
                 result_message = (
-                    f"🔍 *Đang phân tích thời gian thực...*\n"
-                    f"⚔️ Trận đấu: *{player_match}*\n\n"
-                    f"📊 *Dự đoán từ mô hình:*\n"
-                    f"🏆 Người thắng dự kiến: *{player_match.split('vs')[0].strip()}* (Xác suất 68%)\n"
-                    f"📉 Tỷ số dự đoán: *2 - 1Sets* (Set 3 quyết định)\n"
-                    f"⚡ Momentum hiện tại đang nghiêng rõ rệt ở game giao bóng gần nhất!"
+                    f"Dang phan tich thoi gian thuc...\n"
+                    f"Tran dau: {player_match}\n\n"
+                    f"Du doan tu mohinh:\n"
+                    f"- Nguoi thang du kien: {player_match.split('vs')[0].strip()} (Xac suat 68%)\n"
+                    f"- Ty so du doan: 2 - 1 Sets\n"
+                    f"- Momentum dang nghieng ro ret!"
                 )
                 send_telegram_message(chat_id, result_message)
                 return "OK", 200
