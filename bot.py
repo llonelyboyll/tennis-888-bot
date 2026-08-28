@@ -4,26 +4,26 @@ from flask import Flask, request
 
 app = Flask(__name__)
 
-# Lấy trực tiếp token và chat id từ biến môi trường trên Railway
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 
 def send_telegram_message(text):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("Lỗi: Chưa cấu hình TELEGRAM_BOT_TOKEN hoặc TELEGRAM_CHAT_ID trên Railway")
+        print("Lỗi: Thiếu Token hoặc Chat ID trong biến môi trường!")
         return
     
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
+        "chat_id": int(TELEGRAM_CHAT_ID),
         "text": text,
         "parse_mode": "Markdown"
     }
     try:
         response = requests.post(url, json=payload)
-        print(f"Telegram response: {response.text}")
+        print(f"Telegram API Status: {response.status_code}")
+        print(f"Telegram API Response: {response.text}")
     except Exception as e:
-        print(f"Lỗi kết nối tới Telegram: {e}")
+        print(f"Lỗi kết nối HTTP tới Telegram: {e}")
 
 @app.route('/', methods=['GET'])
 def home():
@@ -45,17 +45,15 @@ def webhook():
         score2 = data.get('score2', '4-6, 2-3')
         server = data.get('server', player1)
 
-    # Nội dung tin nhắn phân tích gửi về Telegram
     message = f"🎾 *Phân tích trận đấu Tennis*\n\n" \
               f"👤 *{player1}* vs *{player2}*\n" \
               f"📊 Tỷ số: {score1} - {score2}\n" \
               f"🎯 Đang giao bóng: {server}\n" \
-              f"⚡ Momentum & Markov: Đã cập nhật!"
+              f"⚡ Hệ thống phân tích đã sẵn sàng!"
 
-    # Gọi hàm bắn tin nhắn về Telegram
     send_telegram_message(message)
     
-    return f"Da phan tich va gui Telegram tran: {player1} vs {player2} thanh cong!"
+    return f"Da gui tin nhan ve Telegram cho chat_id: {TELEGRAM_CHAT_ID}!"
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
