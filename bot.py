@@ -1,7 +1,8 @@
 import os
-import requests
+requests
 import time
 import threading
+from datetime import datetime
 from flask import Flask, request
 
 app = Flask(__name__)
@@ -27,11 +28,20 @@ def send_telegram_message(chat_id, text):
         print(f"Lỗi gửi tin nhắn: {e}")
 
 def fetch_live_score_from_api(p1, p2):
-    """Hàm gọi RapidAPI để lấy tỷ số live thực tế của trận đấu"""
+    """Hàm gọi đúng endpoint chuẩn của gói Tennis API trên RapidAPI"""
     if not RAPIDAPI_KEY:
-        return "Set 1: 6 - 7 (Live thật)"
+        return "Chưa có RapidAPI Key"
     
-    url = "https://tennis-api-atp-wta-itf.p.rapidapi.com/matches/live"
+    # Lấy ngày hiện tại định dạng YYYY-MM-DD
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    
+    # Làm sạch tên để đưa vào URL (bỏ dấu cách hoặc thay bằng định dạng API yêu cầu)
+    p1_clean = p1.replace(" ", "")
+    p2_clean = p2.replace(" ", "")
+    
+    # Endpoint chuẩn theo tài liệu của gói API trong ảnh
+    url = f"https://tennis-api-atp-wta-itf.p.rapidapi.com/tennis/v2/extend/api/event/get/{p1_clean}/{p2_clean}/{today_str}"
+    
     headers = {
         "X-RapidAPI-Key": RAPIDAPI_KEY,
         "X-RapidAPI-Host": "tennis-api-atp-wta-itf.p.rapidapi.com"
@@ -39,25 +49,21 @@ def fetch_live_score_from_api(p1, p2):
     try:
         response = requests.get(url, headers=headers, timeout=10)
         data = response.json()
-        matches = data.get("results", data.get("matches", data.get("content", [])))
-        if not isinstance(matches, list):
-            matches = []
-
-        for match in matches:
-            home_name = str(match.get("homePlayer", match.get("home_player", {})) or "").lower()
-            away_name = str(match.get("awayPlayer", match.get("away_player", {})) or "").lower()
+        
+        # Bóc tách điểm số từ kết quả trả về của endpoint chi tiết sự kiện
+        event_data = data.get("event", data.get("results", data))
+        score_info = event_data.get("score", event_data.get("status", {}))
+        
+        if score_info:
+            return str(score_info)
             
-            if (p1.lower() in home_name or p1.lower() in away_name) or (p2.lower() in home_name or p2.lower() in away_name):
-                score_info = match.get("score", "") or match.get("status", {}).get("reason", "")
-                if score_info:
-                    return str(score_info)
     except Exception as e:
-        print(f"Lỗi gọi API live: {e}")
+        print(f"Lỗi gọi API chi tiết trận đấu: {e}")
     
     return "Set 1: Đang cập nhật Live"
 
 def background_match_monitor():
-    """Hàm chạy ngầm liên tục quét RapidAPI để bắt biến động tỷ số"""
+    """Hàm chạy ngầm liên tục quét bắt biến động tỷ số"""
     while True:
         time.sleep(30)
         if not active_watchlist:
@@ -107,24 +113,23 @@ def webhook():
                 p1 = parts[0].strip()
                 p2 = parts[1].strip()
                 
-                send_telegram_message(chat_id, f"🔄 Đang kết nối phân tích trận *{p1} vs {p2}*...")
+                send_telegram_message(chat_id, f"🔄 Đang kết nối endpoint chuẩn của RapidAPI cho trận *{p1} vs {p2}*...")
                 
-                current_score = fetch_live_score_from_api(p1, p2)
+                initial_score = fetch_live_score_from_api(p1, p2)
                 active_watchlist[chat_id] = {
                     "p1": p1,
                     "p2": p2,
-                    "last_score": current_score
+                    "last_score": initial_score
                 }
                 
-                # Đã khôi phục lại phần nhận định người thắng, xác suất và tỷ số dự đoán tối ưu
                 prediction_msg = (
                     f"🔥 *KẾT QUẢ PHÂN TÍCH & KÍCH HOẠT RADAR*\n\n"
                     f"⚔️ *Trận đấu:* {p1} vs {p2}\n"
-                    f"⚡ *Trạng thái:* Đang diễn ra trực tiếp (Live)\n"
-                    f"📊 *Tỷ số hiện tại:* `{current_score}`\n\n"
+                    f"⚡ *Trạng thái:* Đang kết nối API chuẩn\n"
+                    f"📊 *Tỷ số hiện tại:* `{initial_score}`\n\n"
                     f"🏆 *Người chiến thắng (Xác suất cao):* *{p2}* (~78%)\n"
                     f"🎯 *Tỷ số dự đoán tối ưu:* `4-6, 6-3, 6-4`\n\n"
-                    f"🛡️ *Hệ thống Radar:* Đã bật canh biến động qua API. Bot sẽ tự động hú còi cảnh báo ngay khi tỷ số dịch chuyển!"
+                    f"🛡️ *Hệ thống Radar:* Đã bật canh biến động qua đúng endpoint RapidAPI. Bot sẽ tự động hú còi khi tỷ số thay đổi!"
                 )
                 send_telegram_message(chat_id, prediction_msg)
                 return "OK", 200
