@@ -7,6 +7,8 @@ from flask import Flask, request
 app = Flask(__name__)
 
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
+RAPIDAPI_KEY = os.environ.get('RAPIDAPI_KEY', '')
+
 active_watchlist = {}
 
 def send_telegram_message(chat_id, text):
@@ -23,18 +25,44 @@ def send_telegram_message(chat_id, text):
     except Exception as e:
         print(f"Lỗi gửi tin nhắn: {e}")
 
-def fetch_live_score_dynamic(p1, p2):
-    """Bóc tách dữ liệu linh hoạt theo thời gian thực"""
+def fetch_live_score_from_api(p1, p2):
+    """Gọi trực tiếp gói RapidAPI Tennis chuẩn"""
+    if not RAPIDAPI_KEY:
+        return "Chưa cấu hình RapidAPI Key"
+    
+    url = "https://tennis-api-atp-wta-itf.p.rapidapi.com/tennis/v2/extend/api/matches/live"
+    headers = {
+        "X-RapidAPI-Key": RAPIDAPI_KEY,
+        "X-RapidAPI-Host": "tennis-api-atp-wta-itf.p.rapidapi.com"
+    }
     try:
-        # Thay vì cào tĩnh, kết nối qua endpoint thể thao mở để lấy chuỗi trạng thái mới nhất
-        url = "https://tennis-api-atp-wta-itf.p.rapidapi.com/tennis/v2/extend/api/matches/live"
-        # Nếu không có Key, chuyển sang chế độ tự động mô phỏng theo nhịp thực tế trên sân
-        current_minute = time.strftime("%M")
-        game_number = int(current_minute) % 6 + 1
-        return f"Set 2 (Game {game_number}): Đang cập nhật live từng điểm số..."
+        response = requests.get(url, headers=headers, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            matches = data.get("matches", data.get("results", data.get("content", data.get("data", []))))
+            if not isinstance(matches, list):
+                matches = [data]
+
+            p1_key = p1.split()[-1].lower() if p1 else ""
+            p2_key = p2.split()[-1].lower() if p2 else ""
+
+            for match in matches:
+                home = str(match.get("homePlayer", match.get("home", ""))).lower()
+                away = str(match.get("awayPlayer", match.get("away", ""))).lower()
+                
+                if (p1_key in home or p1_key in away) or (p2_key in home or p2_key in away):
+                    score = match.get("score", {})
+                    if isinstance(score, dict):
+                        current_set = score.get("current", "2")
+                        display = score.get("display", "")
+                        if display:
+                            return f"Set {current_set}: {display}"
+                    return f"Đang diễn ra trực tiếp trên API"
+                    
     except Exception as e:
-        print(f"Lỗi: {e}")
-    return "Set 2: Đang diễn ra trực tiếp"
+        print(f"Lỗi gọi API: {e}")
+    
+    return "Đang chờ cập nhật từ hệ thống API..."
 
 def background_match_monitor():
     while True:
@@ -47,9 +75,9 @@ def background_match_monitor():
             p2 = info["p2"]
             old_score = info["last_score"]
             
-            current_score = fetch_live_score_dynamic(p1, p2)
+            current_score = fetch_live_score_from_api(p1, p2)
             
-            if current_score and current_score != old_score:
+            if current_score and current_score != old_score and "Đang chờ" not in current_score:
                 active_watchlist[chat_id]["last_score"] = current_score
                 alert_msg = (
                     f"🚨 *CẢNH BÁO BIẾN ĐỘNG / LẬT KÈO!*\n\n"
@@ -61,7 +89,7 @@ def background_match_monitor():
 
 @app.route('/', methods=['GET'])
 def home():
-    return "Bot đang chạy luồng live động!"
+    return "Bot API chuẩn đang hoạt động!"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -72,8 +100,8 @@ def webhook():
         
         if text.startswith("/start"):
             welcome_msg = (
-                "🎾 *Hệ thống Cảnh báo Lật kèo Tennis*\n\n"
-                "Nhập tên cặp đấu để kích hoạt:\n"
+                "🎾 *Hệ thống Radar Kèo Tennis (API Mode)*\n\n"
+                "Nhập tên cặp đấu để bot tự động quét:\n"
                 "`Player 1 vs Player 2`"
             )
             send_telegram_message(chat_id, welcome_msg)
@@ -86,9 +114,9 @@ def webhook():
                 p1 = parts[0].strip()
                 p2 = parts[1].strip()
                 
-                send_telegram_message(chat_id, f"⚡ Đang thiết lập luồng live cho *{p1} vs {p2}*...")
+                send_telegram_message(chat_id, f"⚡ Đang kết nối gói API chuẩn cho *{p1} vs {p2}*...")
                 
-                initial_score = fetch_live_score_dynamic(p1, p2)
+                initial_score = fetch_live_score_from_api(p1, p2)
                 active_watchlist[chat_id] = {
                     "p1": p1,
                     "p2": p2,
@@ -98,16 +126,16 @@ def webhook():
                 prediction_msg = (
                     f"🔥 *KẾT QUẢ PHÂN TÍCH & KÍCH HOẠT RADAR*\n\n"
                     f"⚔️ *Trận đấu:* {p1} vs {p2}\n"
-                    f"⚡ *Trạng thái:* Đang theo dõi Live chuẩn xác\n"
+                    f"⚡ *Trạng thái:* Đang quét tự động qua API\n"
                     f"📊 *Tỷ số hiện tại:* `{initial_score}`\n\n"
                     f"🏆 *Người chiến thắng (Xác suất cao):* *{p2}* (~78%)\n"
                     f"🎯 *Tỷ số dự đoán tối ưu:* `4-6, 6-3, 6-4`\n\n"
-                    f"🛡️ *Hệ thống Radar:* Đã bật canh biến động ngầm theo thời gian thực!"
+                    f"🛡️ *Hệ thống Radar:* Đã bật canh biến động ngầm!"
                 )
                 send_telegram_message(chat_id, prediction_msg)
                 return "OK", 200
 
-        send_telegram_message(chat_id, "⚠️ Sai cú pháp! Vui lòng nhập: `Tên 1 vs Tên 2`")
+        send_telegram_message(chat_id, "⚠️ Sai cú pháp! Nhập đúng định dạng: `Tên 1 vs Tên 2`")
         return "OK", 200
 
     return "OK", 200
