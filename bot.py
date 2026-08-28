@@ -26,14 +26,12 @@ def send_telegram_message(chat_id, text):
         print(f"Lỗi gửi tin nhắn: {e}")
 
 def fetch_pure_bet365_live(p1, p2):
-    """
-    🌐 Lấy trực tiếp 100% dữ liệu từ Bet365 API trên RapidAPI, không dùng giả lập
-    """
     url = "https://bet365.p.rapidapi.com/events/inplay"
     headers = {
         "X-RapidAPI-Key": RAPIDAPI_KEY,
         "X-RapidAPI-Host": "bet365.p.rapidapi.com"
     }
+    # Lấy tên họ của vận động viên để khớp dữ liệu rộng hơn
     p1_key = p1.split()[-1].lower()
     p2_key = p2.split()[-1].lower()
     
@@ -44,14 +42,14 @@ def fetch_pure_bet365_live(p1, p2):
             matches = data.get("results", data.get("data", data.get("matches", [])))
             if isinstance(matches, list):
                 for match in matches:
-                    m_title = str(match.get("title", match.get("name", ""))()).lower()
+                    m_title = str(match.get("title", match.get("name", ""))).lower()
                     if p1_key in m_title or p2_key in m_title:
                         score = match.get("scores", match.get("score", ""))
                         status = match.get("status", match.get("time", "Live"))
                         if score:
-                            return f"{score} ({status})"
+                            return f"{score} | Trạng thái: {status}"
     except Exception as e:
-        print(f"Lỗi gọi API Bet365: {e}")
+        print(f"Lỗi API: {e}")
         
     return None
 
@@ -70,17 +68,16 @@ def background_live_engine_worker():
             
             if new_state and new_state != old_state:
                 live_engines[chat_id]["last_state"] = new_state
-                
                 alert_msg = (
-                    f"🚨 *CẬP NHẬT TỶ SỐ BET365!*\n\n"
-                    f"⚔️ *Trận đấu:* {p1} vs {p2}\n"
-                    f"📡 *Tỷ số Live chính xác:* `{new_state}`"
+                    f"🚨 *CẬP NHẬT TỶ SỐ THỰC TẾ!*\n\n"
+                    f"⚔️ *Trận:* {p1} vs {p2}\n"
+                    f"📡 *Tỷ số Live:* `{new_state}`"
                 )
                 send_telegram_message(chat_id, alert_msg)
 
 @app.route('/', methods=['GET'])
 def home():
-    return "🔥 PURE BET365 LIVE TENNIS FEED đang hoạt động!"
+    return "🔥 PURE LIVE TENNIS ENGINE IS RUNNING!"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -91,9 +88,9 @@ def webhook():
         
         if text.startswith("/start"):
             welcome_msg = (
-                "🔥 *PURE BET365 TENNIS FEED*\n\n"
-                "Chỉ lấy và hiển thị tỷ số trực tiếp từ nguồn API Bet365.\n"
-                "Nhập tên cặp đấu để bắt đầu:\n"
+                "🔥 *PURE TENNIS FEED*\n\n"
+                "Chỉ hiển thị đúng dữ liệu thô từ nguồn trực tiếp.\n"
+                "Nhập tên cặp đấu:\n"
                 "`Player 1 vs Player 2`"
             )
             send_telegram_message(chat_id, welcome_msg)
@@ -106,11 +103,11 @@ def webhook():
                 p1 = parts[0].strip()
                 p2 = parts[1].strip()
                 
-                send_telegram_message(chat_id, f"⚡ Đang truy xuất luồng Bet365 cho trận *{p1} vs {p2}*...")
+                send_telegram_message(chat_id, f"⚡ Đang dò tìm luồng trực tiếp cho trận *{p1} vs {p2}*...")
                 
                 current_state = fetch_pure_bet365_live(p1, p2)
                 if not current_state:
-                    current_state = "Đang chờ trận đấu cập nhật trên hệ thống Bet365..."
+                    current_state = "Đang chờ đồng bộ dữ liệu sân đấu..."
                 
                 live_engines[chat_id] = {
                     "p1": p1,
@@ -120,9 +117,9 @@ def webhook():
                 
                 response_msg = (
                     f"╔══════════════════════════╗\n"
-                    f"     🔥 *BET365 LIVE FEED*     \n"
+                    f"     🔥 *LIVE TENNIS FEED*     \n"
                     f"╚══════════════════════════╝\n\n"
-                    f"⚔️ *Trận đấu:* {p1} vs {p2}\n"
+                    f"⚔️ *Trận:* {p1} vs {p2}\n"
                     f"📡 *Tỷ số Live:* `{current_state}`"
                 )
                 send_telegram_message(chat_id, response_msg)
