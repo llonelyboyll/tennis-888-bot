@@ -1,7 +1,7 @@
 import os
-requests
 import time
 import threading
+import requests
 from flask import Flask, request
 
 app = Flask(__name__)
@@ -27,11 +27,10 @@ def send_telegram_message(chat_id, text):
         print(f"Lỗi gửi tin nhắn: {e}")
 
 def fetch_live_score_from_api(p1, p2):
-    """Hàm quét danh sách live tổng quát để bắt đúng tỷ số thời gian thực của trận đấu"""
+    """Hàm quét danh sách live tổng quát để bắt đúng tỷ số thời gian thực"""
     if not RAPIDAPI_KEY:
         return "Chưa có RapidAPI Key"
     
-    # Gọi endpoint danh sách trận đấu đang live tổng quát của hệ thống RapidAPI
     url = "https://tennis-api-atp-wta-itf.p.rapidapi.com/tennis/v2/extend/api/matches/live"
     
     headers = {
@@ -42,24 +41,20 @@ def fetch_live_score_from_api(p1, p2):
         response = requests.get(url, headers=headers, timeout=10)
         data = response.json()
         
-        # Duyệt qua các tầng dữ liệu trả về phổ biến
         matches = data.get("matches", data.get("results", data.get("content", data.get("data", []))))
         if not isinstance(matches, list):
-            matches = [matches] # Phòng trường hợp API trả về dạng dict đơn
+            matches = [matches]
 
-        p1_key = p1.split()[-1].lower()
-        p2_key = p2.split()[-1].lower()
+        p1_key = p1.split()[-1].lower() if p1 else ""
+        p2_key = p2.split()[-1].lower() if p2 else ""
 
         for match in matches:
-            # Lấy thông tin tên vận động viên từ các cấu trúc key khác nhau
             home = str(match.get("homePlayer", match.get("home", {}))).lower()
             away = str(match.get("awayPlayer", match.get("away", {}))).lower()
             
-            if (p1_key in home or p1_key in away) or (p2_key in home or p2_key in away):
-                # Trích xuất chuỗi điểm số trực tiếp từ match live
+            if (p1_key and (p1_key in home or p1_key in away)) or (p2_key and (p2_key in home or p2_key in away)):
                 score_obj = match.get("score", match.get("status", {}))
                 if isinstance(score_obj, dict):
-                    # Lấy thông tin chi tiết set/game nếu có
                     current_set = score_obj.get("current", "")
                     reason = score_obj.get("reason", "")
                     score_str = f"{reason} (Set {current_set})" if current_set else str(reason)
@@ -72,7 +67,7 @@ def fetch_live_score_from_api(p1, p2):
     except Exception as e:
         print(f"Lỗi gọi API live tổng quát: {e}")
     
-    return "Set 2: Đang cập nhật Live"
+    return "Đang đồng bộ dữ liệu Live..."
 
 def background_match_monitor():
     """Hàm chạy ngầm liên tục quét bắt biến động tỷ số"""
@@ -88,7 +83,7 @@ def background_match_monitor():
             
             current_score = fetch_live_score_from_api(p1, p2)
             
-            if current_score and current_score != old_score and "Đang cập nhật" not in current_score:
+            if current_score and current_score != old_score and "Đang đồng bộ" not in current_score:
                 active_watchlist[chat_id]["last_score"] = current_score
                 alert_msg = (
                     f"🚨 *CẢNH BÁO BIẾN ĐỘNG / LẬT KÈO!*\n\n"
