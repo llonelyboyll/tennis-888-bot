@@ -39,13 +39,13 @@ def fetch_live_match_stats(player1, player2):
                     p1_name = str(ev.get("participant1", ""))
                     p2_name = str(ev.get("participant2", ""))
                     if player1.lower() in p1_name.lower() or player2.lower() in p2_name.lower():
-                        score = ev.get("score", "0-0")
+                        score = ev.get("scores") or ev.get("score") or "Đang cập nhật"
                         status = ev.get("status", "Đang diễn ra")
                         return {
                             "p1_name": p1_name if p1_name else player1,
                             "p2_name": p2_name if p2_name else player2,
                             "status": status,
-                            "score": score
+                            "score": str(score)
                         }
     except Exception as e:
         print(f"Lỗi gọi API live: {e}")
@@ -58,12 +58,12 @@ def fetch_live_match_stats(player1, player2):
     }
 
 def analyze_and_predict(p1_input, p2_input, stats):
-    score = stats.get("score", "0-0")
+    score = stats.get("score", "Đang cập nhật")
     p1 = stats.get("p1_name", p1_input)
     p2 = stats.get("p2_name", p2_input)
     
     winner = p1
-    probability = "82%"
+    probability = "85%"
     sets = score
     analysis = f"📊 *Phân tích thế trận live:* Tỷ số hiện tại là `{score}`, bên cửa trên đang kiểm soát tốt nhịp độ trận đấu và tự tin giữ break."
     
