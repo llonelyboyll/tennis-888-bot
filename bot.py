@@ -1,26 +1,6 @@
 # ============================================================
-# TENNIS LIVE AI BOT v3
+# TENNIS LIVE AI BOT v3 (Đã sửa lỗi cấu hình Telegram & Key)
 # RapidAPI - Tennis API ATP WTA ITF
-#
-# DATA:
-#   /events/live
-#   /event/live-score/get/{event_id}
-#   /event/timeline/{event_id}
-#
-# MODEL:
-#   live score
-#   set/game state
-#   current point
-#   serve indicator
-#   timeline
-#   live statistics
-#   momentum
-#   dominance
-#
-# OUTPUT:
-#   Telegram
-#
-# Python 3.10+
 # ============================================================
 
 import os
@@ -42,19 +22,21 @@ BASE_URL = (
     "/tennis/v2/extend/api"
 )
 
+# Đã điền sẵn RapidAPI Key của anh vào đây
 RAPIDAPI_KEY = os.getenv(
     "RAPIDAPI_KEY",
-    ""
+    "dbcb6f204emshf93e9e1bb342b5fp1c720djsn909778cd5b67"
 )
 
+# THAY TOKEN VÀ CHAT ID CỦA TELEGRAM VÀO 2 DƯỚI NÀY:
 TELEGRAM_BOT_TOKEN = os.getenv(
     "TELEGRAM_BOT_TOKEN",
-    ""
+    "PASTE_TELEGRAM_BOT_TOKEN_HERE"
 )
 
 TELEGRAM_CHAT_ID = os.getenv(
     "TELEGRAM_CHAT_ID",
-    ""
+    "PASTE_TELEGRAM_CHAT_ID_HERE"
 )
 
 # 8 giây / lần là hợp lý.
@@ -190,10 +172,6 @@ class TennisAPI:
         self.client = APIClient()
 
 
-    # --------------------------------------------------------
-    # LIVE EVENTS
-    # --------------------------------------------------------
-
     def live_events(self):
 
         data = self.client.get(
@@ -209,13 +187,11 @@ class TennisAPI:
         )
 
 
-        # result = list
         if isinstance(result, list):
 
             return result
 
 
-        # result = dict
         if isinstance(result, dict):
 
             for key in (
@@ -233,7 +209,6 @@ class TennisAPI:
                     return value
 
 
-        # data = list
         value = data.get("data")
 
         if isinstance(value, list):
@@ -244,10 +219,6 @@ class TennisAPI:
         return []
 
 
-    # --------------------------------------------------------
-    # LIVE SCORE
-    # --------------------------------------------------------
-
     def live_score(
         self,
         event_id
@@ -257,10 +228,6 @@ class TennisAPI:
             f"/event/live-score/get/{event_id}"
         )
 
-
-    # --------------------------------------------------------
-    # TIMELINE
-    # --------------------------------------------------------
 
     def timeline(
         self,
@@ -363,10 +330,6 @@ def clamp(
     )
 
 
-# ============================================================
-# EXTRACT PAYLOAD
-# ============================================================
-
 def unwrap(data):
 
     if not isinstance(data, dict):
@@ -378,7 +341,6 @@ def unwrap(data):
 
     if isinstance(result, dict):
 
-        # Nếu result chứa event/match/data
         for key in (
             "event",
             "match",
@@ -401,10 +363,6 @@ def unwrap(data):
 
     return data
 
-
-# ============================================================
-# PARSE LIVE EVENT
-# ============================================================
 
 def parse_match(
     raw
@@ -437,7 +395,6 @@ def parse_match(
     )
 
 
-    # Một số response có name nhưng không có participant
     if not player1 or not player2:
 
         name = str(
@@ -531,10 +488,6 @@ def parse_match(
     )
 
 
-# ============================================================
-# MERGE LIVE DATA
-# ============================================================
-
 def merge_live_data(
     match,
     data
@@ -549,7 +502,6 @@ def merge_live_data(
         return
 
 
-    # SCORE
     value = first_value(
         payload,
         [
@@ -563,7 +515,6 @@ def merge_live_data(
         match.score = str(value)
 
 
-    # POINTS
     value = first_value(
         payload,
         [
@@ -578,7 +529,6 @@ def merge_live_data(
         match.points = str(value)
 
 
-    # INDICATOR
     value = first_value(
         payload,
         [
@@ -593,7 +543,6 @@ def merge_live_data(
         match.indicator = str(value)
 
 
-    # STATUS
     value = payload.get(
         "status"
     )
@@ -603,7 +552,6 @@ def merge_live_data(
         match.status = str(value)
 
 
-    # STATS
     stats = payload.get(
         "stats"
     )
@@ -615,7 +563,6 @@ def merge_live_data(
         )
 
 
-    # TIMELINE
     timeline = payload.get(
         "timeline"
     )
@@ -624,10 +571,6 @@ def merge_live_data(
 
         match.timeline = timeline
 
-
-# ============================================================
-# SCORE PARSER
-# ============================================================
 
 def parse_score(
     score
@@ -658,7 +601,6 @@ def parse_score(
         return result
 
 
-    # Completed sets
     for part in parts[:-1]:
 
         if "-" not in part:
@@ -688,7 +630,6 @@ def parse_score(
             result["sets2"] += 1
 
 
-    # Nếu chỉ có một set nhưng nó đã kết thúc
     if len(parts) == 1:
 
         try:
@@ -701,8 +642,6 @@ def parse_score(
             a = int(a)
             b = int(b)
 
-            # 6-0 đến 6-4
-            # hoặc 7-5 / 7-6
             if (
                 a >= 6
                 and
@@ -738,7 +677,6 @@ def parse_score(
             return result
 
 
-    # Current set
     last = parts[-1]
 
     if "-" in last:
@@ -760,10 +698,6 @@ def parse_score(
     return result
 
 
-# ============================================================
-# POINT PARSER
-# ============================================================
-
 def point_probability(
     points
 ):
@@ -774,8 +708,6 @@ def point_probability(
 
     text = str(points).lower().strip()
 
-
-    # Love
     mapping = {
         "love": 0,
         "0": 0,
@@ -834,10 +766,6 @@ def point_probability(
 
     return 0.50
 
-
-# ============================================================
-# STATS
-# ============================================================
 
 def pair(
     stats,
@@ -938,10 +866,6 @@ def analyze_stats(
     }
 
 
-# ============================================================
-# TIMELINE
-# ============================================================
-
 def analyze_timeline(
     match
 ):
@@ -991,7 +915,6 @@ def analyze_timeline(
         )
 
 
-        # Break = strong momentum
         if "break" in lower:
 
             if p1:
@@ -1003,7 +926,6 @@ def analyze_timeline(
                 score2 += 2.5
 
 
-        # Hold = smaller signal
         elif "hold" in lower:
 
             if p1:
@@ -1022,10 +944,6 @@ def analyze_timeline(
     }
 
 
-# ============================================================
-# LIVE MODEL
-# ============================================================
-
 def calculate_probability(
     match
 ):
@@ -1034,13 +952,7 @@ def calculate_probability(
         match.score
     )
 
-
-    # --------------------------------------------------------
-    # 1. SET STATE
-    # --------------------------------------------------------
-
     p = 0.50
-
 
     set_difference = (
         score["sets1"]
@@ -1048,17 +960,10 @@ def calculate_probability(
         score["sets2"]
     )
 
-
-    # Set advantage is strongest signal.
     p += (
         set_difference
         * 0.19
     )
-
-
-    # --------------------------------------------------------
-    # 2. CURRENT GAME
-    # --------------------------------------------------------
 
     game_difference = (
         score["games1"]
@@ -1066,16 +971,10 @@ def calculate_probability(
         score["games2"]
     )
 
-
     p += (
         game_difference
         * 0.025
     )
-
-
-    # --------------------------------------------------------
-    # 3. CURRENT POINT
-    # --------------------------------------------------------
 
     current_point = (
         point_probability(
@@ -1083,29 +982,21 @@ def calculate_probability(
         )
     )
 
-
     p += (
         current_point
         -
         0.50
     ) * 0.08
 
-
-    # --------------------------------------------------------
-    # 4. TIMELINE / MOMENTUM
-    # --------------------------------------------------------
-
     timeline = analyze_timeline(
         match
     )
-
 
     timeline_total = (
         timeline["score1"]
         +
         timeline["score2"]
     )
-
 
     if timeline_total > 0:
 
@@ -1115,30 +1006,21 @@ def calculate_probability(
             timeline_total
         )
 
-
         p += (
             tp
             -
             0.50
         ) * 0.16
 
-
-    # --------------------------------------------------------
-    # 5. LIVE STATS
-    # --------------------------------------------------------
-
     stats = analyze_stats(
         match
     )
 
-
-    # First serve
     serve_total = (
         stats["serve1"]
         +
         stats["serve2"]
     )
-
 
     if serve_total > 0:
 
@@ -1148,21 +1030,17 @@ def calculate_probability(
             serve_total
         )
 
-
         p += (
             sp
             -
             0.50
         ) * 0.08
 
-
-    # Aces
     ace_total = (
         stats["aces1"]
         +
         stats["aces2"]
     )
-
 
     if ace_total > 0:
 
@@ -1172,21 +1050,17 @@ def calculate_probability(
             ace_total
         )
 
-
         p += (
             ap
             -
             0.50
         ) * 0.04
 
-
-    # Double faults
     df_total = (
         stats["df1"]
         +
         stats["df2"]
     )
-
 
     if df_total > 0:
 
@@ -1196,21 +1070,17 @@ def calculate_probability(
             df_total
         )
 
-
         p += (
             dp
             -
             0.50
         ) * 0.04
 
-
-    # Break point conversion
     bp_total = (
         stats["bp1"]
         +
         stats["bp2"]
     )
-
 
     if bp_total > 0:
 
@@ -1220,38 +1090,16 @@ def calculate_probability(
             bp_total
         )
 
-
         p += (
             bp
             -
             0.50
         ) * 0.06
 
-
-    # --------------------------------------------------------
-    # 6. SERVER INDICATOR
-    # --------------------------------------------------------
-
-    indicator = (
-        str(
-            match.indicator
-        )
-        .strip()
-    )
-
-
-    # Không ép probability theo indicator
-    # nếu không biết chính xác format của API.
-
-
     return clamp(
         p
     )
 
-
-# ============================================================
-# CONFIDENCE
-# ============================================================
 
 def confidence(
     p
@@ -1261,28 +1109,17 @@ def confidence(
         p - 0.50
     )
 
-
     if edge >= 0.30:
-
         return "VERY HIGH"
 
-
     if edge >= 0.20:
-
         return "HIGH"
 
-
     if edge >= 0.10:
-
         return "MEDIUM"
-
 
     return "LOW"
 
-
-# ============================================================
-# DIAGNOSIS
-# ============================================================
 
 def diagnose(
     match
@@ -1292,44 +1129,30 @@ def diagnose(
         match
     )
 
-
     p2 = (
         1.0 - p1
     )
 
-
     if p1 >= p2:
 
         winner = match.player1
-
         winner_p = p1
 
     else:
 
         winner = match.player2
-
         winner_p = p2
-
 
     return {
         "winner": winner,
-
         "p1": p1,
-
         "p2": p2,
-
         "confidence": confidence(
             winner_p
         ),
-
-        "winner_probability":
-            winner_p
+        "winner_probability": winner_p
     }
 
-
-# ============================================================
-# FINGERPRINT
-# ============================================================
 
 def fingerprint(
     match
@@ -1337,11 +1160,9 @@ def fingerprint(
 
     last_timeline = ""
 
-
     if match.timeline:
 
         last = match.timeline[-1]
-
 
         if isinstance(
             last,
@@ -1355,7 +1176,6 @@ def fingerprint(
                 )
             )
 
-
     return (
         match.score,
         match.points,
@@ -1366,15 +1186,11 @@ def fingerprint(
     )
 
 
-# ============================================================
-# TELEGRAM
-# ============================================================
-
 def send_telegram(
     message
 ):
 
-    if not TELEGRAM_BOT_TOKEN:
+    if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN.startswith("PASTE_"):
 
         log.warning(
             "Telegram token chưa được cấu hình"
@@ -1383,7 +1199,7 @@ def send_telegram(
         return False
 
 
-    if not TELEGRAM_CHAT_ID:
+    if not TELEGRAM_CHAT_ID or TELEGRAM_CHAT_ID.startswith("PASTE_"):
 
         log.warning(
             "Telegram chat ID chưa được cấu hình"
@@ -1446,10 +1262,6 @@ def send_telegram(
         return False
 
 
-# ============================================================
-# FORMAT
-# ============================================================
-
 def format_message(
     match,
     result
@@ -1463,16 +1275,13 @@ def format_message(
         result["p2"] * 100
     )
 
-
     timeline = analyze_timeline(
         match
     )
 
-
     stats = analyze_stats(
         match
     )
-
 
     last_event = (
         timeline["recent"][-1]
@@ -1541,23 +1350,14 @@ Every {POLL_SECONDS}s
 """.strip()
 
 
-# ============================================================
-# ENRICH LIVE MATCH
-# ============================================================
-
 def enrich_match(
     api,
     match
 ):
 
-    # --------------------------------------------------------
-    # LIVE SCORE
-    # --------------------------------------------------------
-
     live = api.live_score(
         match.event_id
     )
-
 
     if live:
 
@@ -1566,22 +1366,15 @@ def enrich_match(
             live
         )
 
-
-    # --------------------------------------------------------
-    # TIMELINE
-    # --------------------------------------------------------
-
     timeline = api.timeline(
         match.event_id
     )
-
 
     if timeline:
 
         payload = unwrap(
             timeline
         )
-
 
         if isinstance(
             payload,
@@ -1597,14 +1390,12 @@ def enrich_match(
                 ]
             )
 
-
             if isinstance(
                 events,
                 list
             ):
 
                 match.timeline = events
-
 
         elif isinstance(
             payload,
@@ -1613,10 +1404,6 @@ def enrich_match(
 
             match.timeline = payload
 
-
-# ============================================================
-# MAIN
-# ============================================================
 
 def main():
 
@@ -1654,7 +1441,6 @@ def main():
 
     api = TennisAPI()
 
-
     previous = {}
 
 
@@ -1666,15 +1452,12 @@ def main():
                 api.live_events()
             )
 
-
             log.info(
                 "LIVE EVENTS: %d",
                 len(events)
             )
 
-
             active_ids = set()
-
 
             for raw in events:
 
@@ -1682,27 +1465,19 @@ def main():
                     raw
                 )
 
-
                 if not match:
 
                     continue
 
-
                 active_ids.add(
                     match.event_id
                 )
-
-
-                # ------------------------------------------------
-                # STATUS
-                # ------------------------------------------------
 
                 status = (
                     match.status
                     .lower()
                     .strip()
                 )
-
 
                 if status in {
                     "ended",
@@ -1714,38 +1489,24 @@ def main():
 
                     continue
 
-
-                # ------------------------------------------------
-                # GET LIVE SCORE + TIMELINE
-                # ------------------------------------------------
-
                 enrich_match(
                     api,
                     match
                 )
 
-
-                # ------------------------------------------------
-                # DIAGNOSIS
-                # ------------------------------------------------
-
                 state = fingerprint(
                     match
                 )
-
 
                 result = diagnose(
                     match
                 )
 
-
                 old = previous.get(
                     match.event_id
                 )
 
-
                 probability_changed = True
-
 
                 if old:
 
@@ -1753,7 +1514,6 @@ def main():
                         "p1",
                         0.50
                     )
-
 
                     probability_changed = (
                         abs(
@@ -1765,7 +1525,6 @@ def main():
                         MIN_PROBABILITY_CHANGE
                     )
 
-
                 state_changed = (
                     old is None
                     or
@@ -1773,11 +1532,6 @@ def main():
                     !=
                     state
                 )
-
-
-                # ------------------------------------------------
-                # LOG
-                # ------------------------------------------------
 
                 log.info(
                     "%s vs %s | %s | "
@@ -1790,11 +1544,7 @@ def main():
                     match.score
                 )
 
-
-                # ------------------------------------------------
-                # TELEGRAM
-                # ------------------------------------------------
-
+                # Ép gửi tin nhắn ở lần quét đầu tiên của trận đấu để kiểm tra Telegram
                 should_send = (
 
                     old is None
@@ -1837,10 +1587,6 @@ def main():
                 }
 
 
-            # ----------------------------------------------------
-            # REMOVE OLD EVENTS
-            # ----------------------------------------------------
-
             previous = {
 
                 k: v
@@ -1874,10 +1620,6 @@ def main():
             POLL_SECONDS
         )
 
-
-# ============================================================
-# START
-# ============================================================
 
 if __name__ == "__main__":
 
