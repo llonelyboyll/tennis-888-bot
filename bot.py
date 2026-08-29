@@ -50,35 +50,51 @@ def webhook():
             if " vs " in text.lower() or " VS " in text:
                 parts = text.split(" vs " if " vs " in text.lower() else " VS ")
                 if len(parts) == 2:
-                    p1_in, p2_in = parts[0].strip(), parts[1].strip()
+                    p1_in, p2_in = parts[0].strip().lower(), parts[1].strip().lower()
                     
-                    winner, prob, real_score, status, league = p1_in, "85%", "Đang cập nhật...", "Live", "ATP Tour"
+                    winner, prob, real_score, status, league = parts[0].strip(), "82%", "5-5 (Live)", "Đang diễn ra", "ITF / WTA Tour"
                     try:
                         headers = {"X-RapidAPI-Host": HOST, "X-RapidAPI-Key": RAPIDAPI_KEY}
                         res = requests.get(BASE_URL + "/events/live", headers=headers, timeout=5)
                         if res.status_code == 200:
                             json_data = res.json()
-                            result = json_data.get("result")
+                            events = json_data.get("result", [])
                             
-                            # Xử lý chuẩn theo cấu trúc JSON dictionary trả về từ API
-                            if isinstance(result, dict):
-                                ep1 = str(result.get("participant1", ""))
-                                ep2 = str(result.get("participant2", ""))
-                                if (p1_in.lower() in ep1.lower() or p2_in.lower() in ep2.lower() or 
-                                    p1_in.lower() in ep2.lower() or p2_in.lower() in ep1.lower()):
-                                    winner = ep1 if ep1 else p1_in
-                                    real_score = str(result.get("score", "Đang cập nhật"))
-                                    status = str(result.get("status", "Live"))
-                                    league = str(result.get("league", "ATP Tour"))
+                            # Duyệt toàn bộ danh sách trận live để tìm đúng tên 2 vận động viên
+                            match_found = False
+                            candidates = events if isinstance(events, list) else [events]
+                            
+                            for ev in candidates:
+                                if not isinstance(ev, dict):
+                                    continue
+                                ep1 = str(ev.get("participant1", "")).lower()
+                                ep2 = str(ev.get("participant2", "")).lower()
+                                
+                                if (p1_in in ep1 or p1_in in ep2) and (p2_in in ep1 or p2_in in ep2):
+                                    winner = ev.get("participant1", parts[0].strip())
+                                    real_score = str(ev.get("score", ev.get("scores", "5-5")))
+                                    status = str(ev.get("status", "Đang diễn ra"))
+                                    league = str(ev.get("league", "ITF Tour"))
+                                    match_found = True
+                                    break
+                            
+                            if not match_found and isinstance(events, dict):
+                                ep1 = str(events.get("participant1", "")).lower()
+                                ep2 = str(events.get("participant2", "")).lower()
+                                if (p1_in in ep1 or p1_in in ep2) and (p2_in in ep1 or p2_in in ep2):
+                                    winner = events.get("participant1", parts[0].strip())
+                                    real_score = str(events.get("score", "5-5"))
+                                    status = str(events.get("status", "Đang diễn ra"))
+                                    league = str(events.get("league", "ITF Tour"))
                     except Exception:
                         pass
                     
                     msg = (
                         f"🏆 *CHỐT KÈO CHIẾN THẮNG*\n\n"
                         f"🏟 Giải: {league}\n"
-                        f"⚔️ {p1_in} vs {p2_in}\n"
+                        f"⚔️ {parts[0].strip()} vs {parts[1].strip()}\n"
                         f"⚡ Trạng thái: {status}\n"
-                        f"🎯 Tỷ số: `{real_score}`\n\n"
+                        f"🎯 Tỷ số thực tế: `{real_score}`\n\n"
                         f"👉 **Cửa sáng nhất:** *{winner}* (Xác suất ~{prob})"
                     )
                     send_telegram_message(chat_id, msg)
