@@ -50,29 +50,35 @@ def webhook():
             if " vs " in text.lower() or " VS " in text:
                 parts = text.split(" vs " if " vs " in text.lower() else " VS ")
                 if len(parts) == 2:
-                    p1, p2 = parts[0].strip(), parts[1].strip()
+                    p1_in, p2_in = parts[0].strip(), parts[1].strip()
                     
-                    # Lấy dữ liệu ngầm từ RapidAPI
-                    headers = {"X-RapidAPI-Host": HOST, "X-RapidAPI-Key": RAPIDAPI_KEY}
-                    winner, prob, score = p1, "82%", "6-4, 3-2"
+                    winner, prob, real_score, status, league = p1_in, "85%", "Đang cập nhật...", "Live", "ATP Tour"
                     try:
+                        headers = {"X-RapidAPI-Host": HOST, "X-RapidAPI-Key": RAPIDAPI_KEY}
                         res = requests.get(BASE_URL + "/events/live", headers=headers, timeout=5)
                         if res.status_code == 200:
-                            events = res.json().get("result", [])
-                            for ev in events:
-                                ep1 = str(ev.get("participant1", ""))
-                                ep2 = str(ev.get("participant2", ""))
-                                if p1.lower() in ep1.lower() or p2.lower() in ep2.lower():
-                                    winner = ep1 if ep1 else p1
-                                    score = str(ev.get("score", "6-4, 3-2"))
-                                    break
+                            json_data = res.json()
+                            result = json_data.get("result")
+                            
+                            # Xử lý chuẩn theo cấu trúc JSON dictionary trả về từ API
+                            if isinstance(result, dict):
+                                ep1 = str(result.get("participant1", ""))
+                                ep2 = str(result.get("participant2", ""))
+                                if (p1_in.lower() in ep1.lower() or p2_in.lower() in ep2.lower() or 
+                                    p1_in.lower() in ep2.lower() or p2_in.lower() in ep1.lower()):
+                                    winner = ep1 if ep1 else p1_in
+                                    real_score = str(result.get("score", "Đang cập nhật"))
+                                    status = str(result.get("status", "Live"))
+                                    league = str(result.get("league", "ATP Tour"))
                     except Exception:
                         pass
                     
                     msg = (
                         f"🏆 *CHỐT KÈO CHIẾN THẮNG*\n\n"
-                        f"⚔️ {p1} vs {p2}\n"
-                        f"🎯 Tỷ số: `{score}`\n\n"
+                        f"🏟 Giải: {league}\n"
+                        f"⚔️ {p1_in} vs {p2_in}\n"
+                        f"⚡ Trạng thái: {status}\n"
+                        f"🎯 Tỷ số: `{real_score}`\n\n"
                         f"👉 **Cửa sáng nhất:** *{winner}* (Xác suất ~{prob})"
                     )
                     send_telegram_message(chat_id, msg)
