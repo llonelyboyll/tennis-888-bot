@@ -1,3 +1,28 @@
+import os
+import requests
+from flask import Flask, request
+
+app = Flask(__name__)
+
+TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
+RAPIDAPI_KEY = "1b38cdb058mshdff41dd9b75d9kcjp159177jun2b3cb7c6a741"
+HOST = "tennis-api-atp-wta-itf.p.rapidapi.com"
+BASE_URL = f"https://{HOST}/tennis/v2/extend/api"
+
+def send_telegram_message(chat_id, text):
+    if not TELEGRAM_BOT_TOKEN:
+        return
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "Markdown"
+    }
+    try:
+        requests.post(url, json=payload, timeout=10)
+    except Exception as e:
+        print(f"Lỗi gửi tin nhắn: {e}")
+
 def fetch_live_match_stats(player1, player2):
     url = BASE_URL + "/events/live"
     headers = {
@@ -14,15 +39,16 @@ def fetch_live_match_stats(player1, player2):
                     p1_name = str(ev.get("participant1", ""))
                     p2_name = str(ev.get("participant2", ""))
                     
-                    # Kiểm tra khớp gần đúng tên cầu thủ
                     if (player1.lower() in p1_name.lower() or player1.lower() in p2_name.lower() or
                         player2.lower() in p1_name.lower() or player2.lower() in p2_name.lower()):
                         
-                        score = ev.get("scores") or ev.get("score") or "0-0"
+                        # Lấy chi tiết các trường điểm số hoặc scores từ API
+                        score = ev.get("score") or ev.get("scores") or "0-0"
                         status = ev.get("status", "Đang diễn ra")
+                        
                         return {
-                            "p1_name": p1_name if p1_name else player1,
-                            "p2_name": p2_name if p2_name else player2,
+                            "p1_name": p1_name,
+                            "p2_name": p2_name,
                             "status": status,
                             "score": str(score),
                             "found": True
@@ -33,32 +59,116 @@ def fetch_live_match_stats(player1, player2):
     return {
         "p1_name": player1,
         "p2_name": player2,
-        "status": "Đang diễn ra (Ngoại tuyến)",
-        "score": "Đang cập nhật",
+        "status": "Không tìm thấy dữ liệu live",
+        "score": None,
         "found": False
     }
 
 def analyze_and_predict(p1_input, p2_input, stats):
-    score = stats.get("score", "0-0")
+    if not stats.get("found") or not stats.get("score"):
+        return None, "Trận đấu hiện không có dữ liệu live hoặc chưa bắt đầu trên hệ thống API. Vui lòng chọn trận khác đang phát sóng trực tiếp."
+
+    score = stats.get("score")
     p1 = stats.get("p1_name", p1_input)
     p2 = stats.get("p2_name", p2_input)
-    found = stats.get("found", False)
     
-    # Nếu tìm thấy trận live, phân tích dựa trên tỷ số set thực tế
-    if found and "-" in score:
-        try:
-            # Logic tạm thời dựa vào set để dịch chuyển tỷ lệ phần trăm thắng
+    analysis = f"📊 *Phân tích tỷ số thời gian thực:*\n• Tỷ số ghi nhận từ sàn: `{score}`\n"
+    
+    # Phân tích thông minh dựa trên chuỗi tỷ số thực tế trả về
+    try:
+        # Nếu chuỗi score có định dạng set (ví dụ: "6-4, 2-5")
+        parts = score.replace(",", "-").split("-")
+        if len(parts) >= 2:
+            # Thuật toán đánh giá sơ bộ dựa trên game cuối
+            last_p1 = int(parts[-2].strip())
+            last_p2 = int(parts[-1].strip())
+            
+            if last_p1 > last_p2:
+                winner = p1
+                prob = f"{min(60 + (last_p1 - last_p2) * 10, 92)}%"
+                analysis += f"• *{p1}* đang chiếm ưu thế về số game thắng trong set hiện tại."
+            elif last_p2 > last_p1:
+                winner = p2
+                prob = f"{min(60 + (last_p2 - last_p1) * 10, 92)}%"
+                analysis += f"• *{p2}* đang lội ngược dòng hoặc tạo khoảng cách điểm số."
+            else:
+                winner = p1
+                prob = "52%"
+                analysis += f"• Thế trận đang giằng co ngang bằng (Deuce / Hòa điểm)."
+        else:
             winner = p1
-            probability = "76%"
-            analysis = f"📊 *Phân tích thế trận live:* Tỷ số thực tế ghi nhận `{score}`, thế trận đang giằng co và nghiêng nhẹ về cửa trên."
-        except Exception:
-            winner = p1
-            probability = "70%"
-            analysis = f"📊 Tỷ số hiện tại: `{score}`."
-    else:
-        # Nếu trận chưa bắt đầu hoặc không quét được live, đưa ra nhận định cân bằng hơn
+            prob = "60%"
+            analysis += f"• Trận đấu đang ở giai đoạn đầu, tỷ số chưa phân định rõ ràng."
+    except Exception:
         winner = p1
-        probability = "55%"
-        analysis = f"⚠️ Trận đấu chưa có dữ liệu live chi tiết trên hệ thống. Tạm đánh giá cân bằng."
+        prob = "55%"
+        analysis += f"• Dữ liệu điểm số đang biến động phức tạp."
 
-    return winner, probability, score, analysis
+    return {
+        "winner": winner,
+        "probability": prob,
+        "score": score,
+        "analysis": analysis,
+        "p1": p1,
+        "p2": p2,
+        "status": stats.get("status")
+    }, None
+
+@app.route('/', methods=['GET'])
+def home():
+    return "Tennis Smart Bot đang hoạt động!"
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    try:
+        data = request.json or {}
+        if "message" in data:
+            chat_id = data["message"]["chat"]["id"]
+            text = data["message"].get("text", "").strip()
+            
+            if text.startswith("/start"):
+                welcome_msg = (
+                    "🎾 *Hệ thống Dự đoán Tennis Live Thông Minh*\n\n"
+                    "Nhập tên cặp đấu để hệ thống kiểm tra dữ liệu thật:\n"
+                    "`Player 1 vs Player 2`"
+                )
+                send_telegram_message(chat_id, welcome_msg)
+                return "OK", 200
+            
+            if " vs " in text.lower() or " VS " in text:
+                delimiter = " vs " if " vs " in text.lower() else " VS "
+                parts = text.split(delimiter)
+                if len(parts) == 2:
+                    p1 = parts[0].strip()
+                    p2 = parts[1].strip()
+                    
+                    send_telegram_message(chat_id, f"🔄 Đang quét dữ liệu live chính thống trận *{p1} vs {p2}*...")
+                    
+                    match_stats = fetch_live_match_stats(p1, p2)
+                    result, err = analyze_and_predict(p1, p2, match_stats)
+                    
+                    if err:
+                        send_telegram_message(chat_id, f"⚠️ *CẢNH BÁO / TỪ CHỐI DỰ ĐOÁN*\n\n{err}")
+                        return "OK", 200
+                    
+                    prediction_msg = (
+                        f"🔥 *KẾT QUẢ PHÂN TÍCH THỜI GIAN THỰC*\n\n"
+                        f"⚔️ *Trận đấu:* {result['p1']} vs {result['p2']}\n"
+                        f"⚡ *Trạng thái:* {result['status']}\n\n"
+                        f"🏆 *Dự đoán Người chiến thắng:* *{result['winner']}* (Xác suất ~{result['probability']})\n"
+                        f"🎯 *Tỷ số set:* `{result['score']}`\n\n"
+                        f"{result['analysis']}"
+                    )
+                    send_telegram_message(chat_id, prediction_msg)
+                    return "OK", 200
+
+            send_telegram_message(chat_id, "⚠️ Sai cú pháp! Nhập theo mẫu: `Tên Player 1 vs Tên Player 2`")
+            return "OK", 200
+    except Exception as e:
+        print(f"Lỗi webhook: {e}")
+    
+    return "OK", 200
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port)
