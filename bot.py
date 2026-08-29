@@ -10,16 +10,16 @@ HOST = "tennis-api-atp-wta-itf.p.rapidapi.com"
 BASE_URL = f"https://{HOST}/tennis/v2/extend/api"
 WEBHOOK_URL = "https://tennis-888-bot-production.up.railway.app/webhook"
 
-def setup_webhook_automatically():
+def setup_webhook():
     if TELEGRAM_BOT_TOKEN:
         try:
             requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook?url={WEBHOOK_URL}&drop_pending_updates=true", timeout=5)
         except Exception:
             pass
 
-setup_webhook_automatically()
+setup_webhook()
 
-def send_telegram_message(chat_id, text):
+def send_msg(chat_id, text):
     if not TELEGRAM_BOT_TOKEN:
         return
     try:
@@ -44,7 +44,7 @@ def webhook():
             text = data["message"].get("text", "").strip()
             
             if text.startswith("/start"):
-                send_telegram_message(chat_id, "⚡ Nhập: `Player 1 vs Player 2`")
+                send_msg(chat_id, "⚡ Nhập: `Player 1 vs Player 2`")
                 return "OK", 200
             
             if " vs " in text.lower() or " VS " in text:
@@ -52,16 +52,12 @@ def webhook():
                 if len(parts) == 2:
                     p1_in, p2_in = parts[0].strip().lower(), parts[1].strip().lower()
                     
-                    winner, prob, real_score, status, league = parts[0].strip(), "82%", "5-5 (Live)", "Đang diễn ra", "ITF / WTA Tour"
+                    winner, prob, real_score, status, league = parts[0].strip(), "85%", "Đang cập nhật...", "Live", "Live Match"
                     try:
                         headers = {"X-RapidAPI-Host": HOST, "X-RapidAPI-Key": RAPIDAPI_KEY}
                         res = requests.get(BASE_URL + "/events/live", headers=headers, timeout=5)
                         if res.status_code == 200:
-                            json_data = res.json()
-                            events = json_data.get("result", [])
-                            
-                            # Duyệt toàn bộ danh sách trận live để tìm đúng tên 2 vận động viên
-                            match_found = False
+                            events = res.json().get("result", [])
                             candidates = events if isinstance(events, list) else [events]
                             
                             for ev in candidates:
@@ -72,20 +68,15 @@ def webhook():
                                 
                                 if (p1_in in ep1 or p1_in in ep2) and (p2_in in ep1 or p2_in in ep2):
                                     winner = ev.get("participant1", parts[0].strip())
-                                    real_score = str(ev.get("score", ev.get("scores", "5-5")))
-                                    status = str(ev.get("status", "Đang diễn ra"))
-                                    league = str(ev.get("league", "ITF Tour"))
-                                    match_found = True
+                                    real_score = str(ev.get("score", ev.get("scores", "Đang cập nhật")))
+                                    status = str(ev.get("status", "Live"))
+                                    
+                                    t_obj = ev.get("tournament")
+                                    if isinstance(t_obj, dict):
+                                        league = str(t_obj.get("name", ev.get("league", "Live Match")))
+                                    else:
+                                        league = str(ev.get("league", "Live Match"))
                                     break
-                            
-                            if not match_found and isinstance(events, dict):
-                                ep1 = str(events.get("participant1", "")).lower()
-                                ep2 = str(events.get("participant2", "")).lower()
-                                if (p1_in in ep1 or p1_in in ep2) and (p2_in in ep1 or p2_in in ep2):
-                                    winner = events.get("participant1", parts[0].strip())
-                                    real_score = str(events.get("score", "5-5"))
-                                    status = str(events.get("status", "Đang diễn ra"))
-                                    league = str(events.get("league", "ITF Tour"))
                     except Exception:
                         pass
                     
@@ -94,10 +85,10 @@ def webhook():
                         f"🏟 Giải: {league}\n"
                         f"⚔️ {parts[0].strip()} vs {parts[1].strip()}\n"
                         f"⚡ Trạng thái: {status}\n"
-                        f"🎯 Tỷ số thực tế: `{real_score}`\n\n"
+                        f"🎯 Tỷ số: `{real_score}`\n\n"
                         f"👉 **Cửa sáng nhất:** *{winner}* (Xác suất ~{prob})"
                     )
-                    send_telegram_message(chat_id, msg)
+                    send_msg(chat_id, msg)
                     return "OK", 200
     except Exception:
         pass
