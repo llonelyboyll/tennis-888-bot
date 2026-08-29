@@ -1,25 +1,32 @@
 # ============================================================
-# TENNIS LIVE AI BOT
+# TENNIS LIVE AI BOT v3
 # RapidAPI - Tennis API ATP WTA ITF
 #
-# LIVE DATA
-#   -> live events
-#   -> score / points / indicator
-#   -> stats
-#   -> timeline
-#   -> live probability
-#   -> Monte Carlo
-#   -> Telegram
+# DATA:
+#   /events/live
+#   /event/live-score/get/{event_id}
+#   /event/timeline/{event_id}
+#
+# MODEL:
+#   live score
+#   set/game state
+#   current point
+#   serve indicator
+#   timeline
+#   live statistics
+#   momentum
+#   dominance
+#
+# OUTPUT:
+#   Telegram
 #
 # Python 3.10+
 # ============================================================
 
 import os
 import time
-import random
 import logging
 import requests
-
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -28,35 +35,38 @@ from typing import Any, Dict, List, Optional
 # CONFIG
 # ============================================================
 
-RAPIDAPI_KEY = os.getenv(
-    "RAPIDAPI_KEY",
-    "dbcb6f204emshf93e9e1bb342b5fp1c720djsn909778cd5b67"
+HOST = "tennis-api-atp-wta-itf.p.rapidapi.com"
+
+BASE_URL = (
+    f"https://{HOST}"
+    "/tennis/v2/extend/api"
 )
 
-RAPIDAPI_HOST = "tennis-api-atp-wta-itf.p.rapidapi.com"
+RAPIDAPI_KEY = os.getenv(
+    "RAPIDAPI_KEY",
+    ""
+)
 
 TELEGRAM_BOT_TOKEN = os.getenv(
     "TELEGRAM_BOT_TOKEN",
-    "PASTE_TELEGRAM_BOT_TOKEN_HERE"
+    ""
 )
 
 TELEGRAM_CHAT_ID = os.getenv(
     "TELEGRAM_CHAT_ID",
-    "PASTE_TELEGRAM_CHAT_ID_HERE"
+    ""
 )
 
-# Không nên thấp hơn 5 giây.
-# API có giới hạn request nên 8-10 giây là hợp lý.
+# 8 giây / lần là hợp lý.
 POLL_SECONDS = 8
 
-# Số lần mô phỏng mỗi lần dữ liệu thay đổi
-SIMULATIONS = 10000
+REQUEST_TIMEOUT = 12
 
-# Chỉ gửi Telegram khi state trận đấu thay đổi
+# Chỉ gửi Telegram khi trận có thay đổi.
 SEND_ONLY_ON_CHANGE = True
 
-# Timeout API
-REQUEST_TIMEOUT = 10
+# Không gửi spam nếu probability thay đổi quá ít.
+MIN_PROBABILITY_CHANGE = 0.015
 
 
 # ============================================================
@@ -68,39 +78,32 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s"
 )
 
-log = logging.getLogger("TENNIS-BOT")
+log = logging.getLogger(
+    "TENNIS-LIVE-AI"
+)
 
 
 # ============================================================
-# RAPID API CLIENT
+# HTTP CLIENT
 # ============================================================
 
-class TennisAPI:
+class APIClient:
 
     def __init__(self):
-
-        self.base_url = (
-            "https://"
-            + RAPIDAPI_HOST
-            + "/tennis/v2/extend/api"
-        )
 
         self.session = requests.Session()
 
         self.session.headers.update({
             "Content-Type": "application/json",
-            "x-rapidapi-host": RAPIDAPI_HOST,
-            "x-rapidapi-key": RAPIDAPI_KEY,
-            "User-Agent": "TennisLiveAI/1.0"
+            "X-RapidAPI-Host": HOST,
+            "X-RapidAPI-Key": RAPIDAPI_KEY,
+            "User-Agent": "TennisLiveAI/3.0"
         })
 
-    # --------------------------------------------------------
-    # Generic GET
-    # --------------------------------------------------------
 
-    def get(self, path: str):
+    def get(self, path):
 
-        url = self.base_url + path
+        url = BASE_URL + path
 
         try:
 
@@ -109,45 +112,83 @@ class TennisAPI:
                 timeout=REQUEST_TIMEOUT
             )
 
+            if response.status_code == 429:
+
+                log.warning(
+                    "RapidAPI rate limit"
+                )
+
+                return None
+
+
             if response.status_code != 200:
 
                 log.error(
-                    "API HTTP %s: %s",
+                    "HTTP %s | %s",
                     response.status_code,
-                    response.text[:300]
+                    response.text[:500]
                 )
 
                 return None
+
 
             data = response.json()
 
-            if data.get("success") is False:
+            if isinstance(data, dict):
 
-                log.error(
-                    "API error: %s",
-                    data.get("message")
-                )
+                if data.get("success") is False:
 
-                return None
+                    log.error(
+                        "API returned error: %s",
+                        data.get("message")
+                    )
+
+                    return None
+
 
             return data
+
+
+        except requests.Timeout:
+
+            log.warning(
+                "API timeout: %s",
+                path
+            )
+
+            return None
+
 
         except requests.RequestException as e:
 
             log.error(
-                "RapidAPI request error: %s",
+                "Request error: %s",
                 e
             )
 
             return None
 
+
         except ValueError:
 
             log.error(
-                "RapidAPI returned invalid JSON"
+                "Invalid JSON: %s",
+                path
             )
 
             return None
+
+
+# ============================================================
+# API
+# ============================================================
+
+class TennisAPI:
+
+    def __init__(self):
+
+        self.client = APIClient()
+
 
     # --------------------------------------------------------
     # LIVE EVENTS
@@ -155,59 +196,94 @@ class TennisAPI:
 
     def live_events(self):
 
-        # Endpoint live của Tennis API
-        data = self.get("/events/live")
+        data = self.client.get(
+            "/events/live"
+        )
 
         if not data:
             return []
 
-        result = data.get("result")
 
+        result = data.get(
+            "result"
+        )
+
+
+        # result = list
         if isinstance(result, list):
+
             return result
 
-        # Một số response có thể dùng data
+
+        # result = dict
         if isinstance(result, dict):
 
-            if isinstance(result.get("events"), list):
-                return result["events"]
+            for key in (
+                "events",
+                "data",
+                "matches",
+                "results",
+                "items"
+            ):
 
-            if isinstance(result.get("data"), list):
-                return result["data"]
+                value = result.get(key)
 
-        if isinstance(data.get("data"), list):
-            return data["data"]
+                if isinstance(value, list):
+
+                    return value
+
+
+        # data = list
+        value = data.get("data")
+
+        if isinstance(value, list):
+
+            return value
+
 
         return []
 
+
     # --------------------------------------------------------
-    # EVENT DETAIL
+    # LIVE SCORE
     # --------------------------------------------------------
 
-    def event_detail(
+    def live_score(
         self,
-        player1: str,
-        player2: str,
-        date: str
+        event_id
     ):
 
-        # API dùng player names trong URL.
-        return self.get(
-            f"/event/get/{player1}/{player2}/{date}"
+        return self.client.get(
+            f"/event/live-score/get/{event_id}"
+        )
+
+
+    # --------------------------------------------------------
+    # TIMELINE
+    # --------------------------------------------------------
+
+    def timeline(
+        self,
+        event_id
+    ):
+
+        return self.client.get(
+            f"/event/timeline/{event_id}"
         )
 
 
 # ============================================================
-# MATCH MODEL
+# MATCH STATE
 # ============================================================
 
 @dataclass
-class MatchState:
+class Match:
 
     event_id: str
 
-    player_a: str
-    player_b: str
+    player1: str
+
+    player2: str
 
     score: str = ""
 
@@ -218,6 +294,8 @@ class MatchState:
     indicator: str = ""
 
     league: str = ""
+
+    tour_type: str = ""
 
     stats: Dict[str, Any] = field(
         default_factory=dict
@@ -233,172 +311,179 @@ class MatchState:
 
 
 # ============================================================
-# SAFE HELPERS
+# HELPERS
 # ============================================================
 
-def safe_int(value, default=0):
+def first_value(
+    data: Dict[str, Any],
+    keys
+):
+
+    for key in keys:
+
+        value = data.get(key)
+
+        if value is not None:
+
+            return value
+
+    return None
+
+
+def to_float(value):
 
     try:
-        return int(value)
 
-    except Exception:
-        return default
+        if value is None:
+            return 0.0
 
+        if isinstance(value, str):
 
-def safe_float(value, default=0.0):
+            value = value.replace(
+                "%",
+                ""
+            )
 
-    try:
         return float(value)
 
     except Exception:
-        return default
+
+        return 0.0
 
 
-def clamp(value, low, high):
+def clamp(
+    value,
+    minimum=0.01,
+    maximum=0.99
+):
 
     return max(
-        low,
-        min(high, value)
+        minimum,
+        min(maximum, value)
     )
 
 
 # ============================================================
-# PARSE SCORE
+# EXTRACT PAYLOAD
 # ============================================================
 
-def parse_score(score: str):
+def unwrap(data):
 
-    """
-    Ví dụ:
+    if not isinstance(data, dict):
 
-    6-4
-    7-6,3-6,4-2
-    7-6,6-1
-    """
+        return {}
 
-    sets_a = 0
-    sets_b = 0
 
-    games_a = 0
-    games_b = 0
+    result = data.get("result")
 
-    if not score:
-        return (
-            sets_a,
-            sets_b,
-            games_a,
-            games_b
-        )
+    if isinstance(result, dict):
 
-    score = score.strip()
+        # Nếu result chứa event/match/data
+        for key in (
+            "event",
+            "match",
+            "data"
+        ):
 
-    parts = score.split(",")
+            value = result.get(key)
 
-    for part in parts:
+            if isinstance(value, dict):
 
-        part = part.strip()
+                return value
 
-        if "-" not in part:
-            continue
+        return result
 
-        try:
 
-            a, b = part.split("-")[:2]
+    if isinstance(data.get("data"), dict):
 
-            a = int(a)
-            b = int(b)
+        return data["data"]
 
-        except Exception:
-            continue
 
-        # Tie break / unfinished set
-        if a > b:
-            sets_a += 1
-
-        elif b > a:
-            sets_b += 1
-
-        # Games hiện tại lấy từ set cuối
-        games_a = a
-        games_b = b
-
-    # Score dạng đã hoàn thành nhiều set:
-    # tính lại set từ tất cả các set ngoại trừ set cuối
-    if len(parts) > 1:
-
-        completed_a = 0
-        completed_b = 0
-
-        for part in parts[:-1]:
-
-            if "-" not in part:
-                continue
-
-            try:
-
-                a, b = map(
-                    int,
-                    part.split("-")[:2]
-                )
-
-            except Exception:
-                continue
-
-            if a > b:
-                completed_a += 1
-
-            elif b > a:
-                completed_b += 1
-
-        sets_a = completed_a
-        sets_b = completed_b
-
-    return (
-        sets_a,
-        sets_b,
-        games_a,
-        games_b
-    )
+    return data
 
 
 # ============================================================
-# PARSE MATCH
+# PARSE LIVE EVENT
 # ============================================================
 
-def parse_match(raw: Dict[str, Any]):
+def parse_match(
+    raw
+):
 
     if not isinstance(raw, dict):
+
         return None
 
-    player_a = (
-        raw.get("participant1")
-        or raw.get("player1")
-        or ""
+
+    player1 = first_value(
+        raw,
+        [
+            "participant1",
+            "player1",
+            "home",
+            "homePlayer"
+        ]
     )
 
-    player_b = (
-        raw.get("participant2")
-        or raw.get("player2")
-        or ""
+
+    player2 = first_value(
+        raw,
+        [
+            "participant2",
+            "player2",
+            "away",
+            "awayPlayer"
+        ]
     )
 
-    if not player_a or not player_b:
+
+    # Một số response có name nhưng không có participant
+    if not player1 or not player2:
+
+        name = str(
+            raw.get("name", "")
+        )
+
+        if " vs " in name:
+
+            player1, player2 = (
+                name.split(
+                    " vs ",
+                    1
+                )
+            )
+
+
+    if not player1 or not player2:
+
         return None
 
-    event_id = str(
-        raw.get("id")
-        or raw.get("eventId")
-        or raw.get("matchId")
-        or f"{player_a}_{player_b}"
+
+    event_id = first_value(
+        raw,
+        [
+            "id",
+            "eventId",
+            "event_id",
+            "matchId"
+        ]
     )
 
-    return MatchState(
 
-        event_id=event_id,
+    if not event_id:
 
-        player_a=str(player_a),
+        event_id = (
+            f"{player1}_{player2}"
+        )
 
-        player_b=str(player_b),
+
+    return Match(
+
+        event_id=str(event_id),
+
+        player1=str(player1),
+
+        player2=str(player2),
 
         score=str(
             raw.get("score") or ""
@@ -420,405 +505,777 @@ def parse_match(raw: Dict[str, Any]):
             raw.get("league") or ""
         ),
 
-        stats=raw.get("stats") or {},
+        tour_type=str(
+            raw.get("tourType") or ""
+        ),
 
-        timeline=raw.get("timeline") or [],
+        stats=(
+            raw.get("stats")
+            if isinstance(
+                raw.get("stats"),
+                dict
+            )
+            else {}
+        ),
+
+        timeline=(
+            raw.get("timeline")
+            if isinstance(
+                raw.get("timeline"),
+                list
+            )
+            else []
+        ),
 
         raw=raw
     )
 
 
 # ============================================================
-# LIVE EVENT STATUS
+# MERGE LIVE DATA
 # ============================================================
 
-def is_live(match: MatchState):
+def merge_live_data(
+    match,
+    data
+):
 
-    status = match.status.lower().strip()
+    payload = unwrap(
+        data
+    )
 
-    ended = {
-        "ended",
-        "finished",
-        "completed",
-        "cancelled",
-        "postponed"
-    }
+    if not payload:
 
-    if status in ended:
-        return False
-
-    # Nếu score/points có dữ liệu thì ưu tiên xem như live
-    if match.points:
-        return True
-
-    if status in {
-        "inplay",
-        "in-play",
-        "live",
-        "playing",
-        "started"
-    }:
-        return True
-
-    return False
+        return
 
 
-# ============================================================
-# TIMELINE ANALYSIS
-# ============================================================
+    # SCORE
+    value = first_value(
+        payload,
+        [
+            "score",
+            "currentScore"
+        ]
+    )
 
-def analyze_timeline(match: MatchState):
+    if value is not None:
 
-    a_hold = 0
-    b_hold = 0
+        match.score = str(value)
 
-    a_break = 0
-    b_break = 0
 
-    recent = []
+    # POINTS
+    value = first_value(
+        payload,
+        [
+            "points",
+            "point",
+            "currentPoint"
+        ]
+    )
 
-    for event in match.timeline:
+    if value is not None:
 
-        text = str(
-            event.get("text", "")
+        match.points = str(value)
+
+
+    # INDICATOR
+    value = first_value(
+        payload,
+        [
+            "indicator",
+            "serve",
+            "server"
+        ]
+    )
+
+    if value is not None:
+
+        match.indicator = str(value)
+
+
+    # STATUS
+    value = payload.get(
+        "status"
+    )
+
+    if value is not None:
+
+        match.status = str(value)
+
+
+    # STATS
+    stats = payload.get(
+        "stats"
+    )
+
+    if isinstance(stats, dict):
+
+        match.stats.update(
+            stats
         )
 
-        lower = text.lower()
 
-        recent.append(text)
+    # TIMELINE
+    timeline = payload.get(
+        "timeline"
+    )
 
-        if "break" in lower:
+    if isinstance(timeline, list):
 
-            if match.player_a.lower() in lower:
-
-                a_break += 1
-
-            elif match.player_b.lower() in lower:
-
-                b_break += 1
-
-        elif "holds" in lower:
-
-            if match.player_a.lower() in lower:
-
-                a_hold += 1
-
-            elif match.player_b.lower() in lower:
-
-                b_hold += 1
-
-    # Chỉ lấy các event gần nhất
-    recent = recent[-10:]
-
-    return {
-        "a_hold": a_hold,
-        "b_hold": b_hold,
-        "a_break": a_break,
-        "b_break": b_break,
-        "recent": recent
-    }
+        match.timeline = timeline
 
 
 # ============================================================
-# STATS ANALYSIS
+# SCORE PARSER
 # ============================================================
 
-def analyze_stats(match: MatchState):
-
-    stats = match.stats
+def parse_score(
+    score
+):
 
     result = {
-        "a_aces": 0,
-        "b_aces": 0,
-
-        "a_df": 0,
-        "b_df": 0,
-
-        "a_first_serve": 0,
-        "b_first_serve": 0,
-
-        "a_break": 0,
-        "b_break": 0
+        "sets1": 0,
+        "sets2": 0,
+        "games1": 0,
+        "games2": 0
     }
 
-    def pair(name):
 
-        value = stats.get(name)
+    if not score:
 
-        if not isinstance(value, list):
-            return 0, 0
+        return result
 
-        a = (
-            safe_float(value[0])
-            if len(value) > 0
-            else 0
-        )
 
-        b = (
-            safe_float(value[1])
-            if len(value) > 1
-            else 0
-        )
+    parts = [
+        x.strip()
+        for x in str(score).split(",")
+        if x.strip()
+    ]
 
-        return a, b
 
-    (
-        result["a_aces"],
-        result["b_aces"]
-    ) = pair("aces")
+    if not parts:
 
-    (
-        result["a_df"],
-        result["b_df"]
-    ) = pair("double_faults")
+        return result
 
-    (
-        result["a_first_serve"],
-        result["b_first_serve"]
-    ) = pair("win_1st_serve")
 
-    (
-        result["a_break"],
-        result["b_break"]
-    ) = pair(
-        "break_point_conversions"
-    )
+    # Completed sets
+    for part in parts[:-1]:
+
+        if "-" not in part:
+            continue
+
+        try:
+
+            a, b = (
+                part
+                .split("-")[:2]
+            )
+
+            a = int(a)
+            b = int(b)
+
+        except Exception:
+
+            continue
+
+
+        if a > b:
+
+            result["sets1"] += 1
+
+        elif b > a:
+
+            result["sets2"] += 1
+
+
+    # Nếu chỉ có một set nhưng nó đã kết thúc
+    if len(parts) == 1:
+
+        try:
+
+            a, b = (
+                parts[0]
+                .split("-")[:2]
+            )
+
+            a = int(a)
+            b = int(b)
+
+            # 6-0 đến 6-4
+            # hoặc 7-5 / 7-6
+            if (
+                a >= 6
+                and
+                a - b >= 2
+            ):
+
+                if a > b:
+                    result["sets1"] = 1
+                else:
+                    result["sets2"] = 1
+
+            elif (
+                a == 7
+                and b in (5, 6)
+            ):
+
+                result["sets1"] = 1
+
+            elif (
+                b == 7
+                and a in (5, 6)
+            ):
+
+                result["sets2"] = 1
+
+            result["games1"] = a
+            result["games2"] = b
+
+            return result
+
+        except Exception:
+
+            return result
+
+
+    # Current set
+    last = parts[-1]
+
+    if "-" in last:
+
+        try:
+
+            a, b = (
+                last
+                .split("-")[:2]
+            )
+
+            result["games1"] = int(a)
+            result["games2"] = int(b)
+
+        except Exception:
+            pass
+
 
     return result
 
 
 # ============================================================
-# SCORE PROBABILITY
+# POINT PARSER
 # ============================================================
 
-def score_probability(match: MatchState):
+def point_probability(
+    points
+):
 
-    (
-        sets_a,
-        sets_b,
-        games_a,
-        games_b
-    ) = parse_score(match.score)
+    if not points:
+        return 0.50
 
-    score = 0.50
 
-    # SET ADVANTAGE
-    score += (
-        sets_a - sets_b
-    ) * 0.17
+    text = str(points).lower().strip()
 
-    # GAME ADVANTAGE
-    score += (
-        games_a - games_b
-    ) * 0.025
 
-    # POINT ADVANTAGE
-    if match.points:
+    # Love
+    mapping = {
+        "love": 0,
+        "0": 0,
+        "15": 1,
+        "30": 2,
+        "40": 3,
+        "a": 4,
+        "adv": 4,
+        "advantage": 4
+    }
+
+
+    if "-" not in text:
+
+        return 0.50
+
+
+    a, b = (
+        text.split("-")[:2]
+    )
+
+
+    a = mapping.get(
+        a.strip(),
+        None
+    )
+
+    b = mapping.get(
+        b.strip(),
+        None
+    )
+
+
+    if a is None or b is None:
 
         try:
 
-            p1, p2 = match.points.split("-")
+            a = float(
+                text.split("-")[0]
+            )
 
-            p1 = int(p1)
-            p2 = int(p2)
-
-            if p1 > p2:
-                score += 0.025
-
-            elif p2 > p1:
-                score -= 0.025
+            b = float(
+                text.split("-")[1]
+            )
 
         except Exception:
-            pass
 
-    return clamp(
-        score,
-        0.05,
-        0.95
-    )
+            return 0.50
+
+
+    if a > b:
+        return 0.58
+
+    if b > a:
+        return 0.42
+
+    return 0.50
 
 
 # ============================================================
-# TIMELINE PROBABILITY
+# STATS
 # ============================================================
 
-def timeline_probability(match: MatchState):
+def pair(
+    stats,
+    names
+):
 
-    data = analyze_timeline(match)
+    value = None
+
+    for name in names:
+
+        if name in stats:
+
+            value = stats[name]
+            break
+
+
+    if not isinstance(
+        value,
+        list
+    ):
+
+        return 0.0, 0.0
+
 
     a = (
-        data["a_hold"]
-        + data["a_break"] * 1.5
+        to_float(value[0])
+        if len(value) > 0
+        else 0.0
     )
 
     b = (
-        data["b_hold"]
-        + data["b_break"] * 1.5
-    )
-
-    if a + b == 0:
-        return 0.50
-
-    return clamp(
-        a / (a + b),
-        0.10,
-        0.90
+        to_float(value[1])
+        if len(value) > 1
+        else 0.0
     )
 
 
-# ============================================================
-# STATS PROBABILITY
-# ============================================================
-
-def stats_probability(match: MatchState):
-
-    stats = analyze_stats(match)
-
-    score_a = 0
-    score_b = 0
-
-    # ACES
-    score_a += stats["a_aces"] * 0.5
-    score_b += stats["b_aces"] * 0.5
-
-    # DOUBLE FAULTS
-    score_a -= stats["a_df"] * 0.4
-    score_b -= stats["b_df"] * 0.4
-
-    # FIRST SERVE %
-    score_a += stats["a_first_serve"] * 0.04
-    score_b += stats["b_first_serve"] * 0.04
-
-    # BREAK CONVERSION
-    score_a += stats["a_break"] * 0.03
-    score_b += stats["b_break"] * 0.03
-
-    if score_a == 0 and score_b == 0:
-        return 0.50
-
-    # Logistic conversion
-    difference = score_a - score_b
-
-    probability = (
-        1 /
-        (
-            1 +
-            pow(
-                2.718281828,
-                -difference / 10
-            )
-        )
-    )
-
-    return clamp(
-        probability,
-        0.10,
-        0.90
-    )
+    return a, b
 
 
-# ============================================================
-# SERVER ADVANTAGE
-# ============================================================
-
-def server_probability(
-    match: MatchState,
-    base_probability
+def analyze_stats(
+    match
 ):
 
-    indicator = (
-        match.indicator
-        or ""
+    stats = match.stats
+
+
+    aces1, aces2 = pair(
+        stats,
+        [
+            "aces",
+            "ace"
+        ]
     )
 
-    if not indicator:
-        return base_probability
 
-    return base_probability
+    df1, df2 = pair(
+        stats,
+        [
+            "double_faults",
+            "doubleFaults",
+            "double_fault"
+        ]
+    )
+
+
+    serve1, serve2 = pair(
+        stats,
+        [
+            "win_1st_serve",
+            "first_serve_won",
+            "firstServeWon"
+        ]
+    )
+
+
+    bp1, bp2 = pair(
+        stats,
+        [
+            "break_point_conversions",
+            "breakPointsWon"
+        ]
+    )
+
+
+    return {
+        "aces1": aces1,
+        "aces2": aces2,
+
+        "df1": df1,
+        "df2": df2,
+
+        "serve1": serve1,
+        "serve2": serve2,
+
+        "bp1": bp1,
+        "bp2": bp2
+    }
+
+
+# ============================================================
+# TIMELINE
+# ============================================================
+
+def analyze_timeline(
+    match
+):
+
+    score1 = 0.0
+    score2 = 0.0
+
+    recent = []
+
+
+    for event in match.timeline:
+
+        if not isinstance(
+            event,
+            dict
+        ):
+
+            continue
+
+
+        text = str(
+            event.get(
+                "text",
+                ""
+            )
+        )
+
+
+        if not text:
+            continue
+
+
+        recent.append(text)
+
+
+        lower = text.lower()
+
+
+        p1 = (
+            match.player1.lower()
+            in lower
+        )
+
+        p2 = (
+            match.player2.lower()
+            in lower
+        )
+
+
+        # Break = strong momentum
+        if "break" in lower:
+
+            if p1:
+
+                score1 += 2.5
+
+            elif p2:
+
+                score2 += 2.5
+
+
+        # Hold = smaller signal
+        elif "hold" in lower:
+
+            if p1:
+
+                score1 += 0.8
+
+            elif p2:
+
+                score2 += 0.8
+
+
+    return {
+        "score1": score1,
+        "score2": score2,
+        "recent": recent[-10:]
+    }
 
 
 # ============================================================
 # LIVE MODEL
 # ============================================================
 
-def calculate_live_probability(match):
-
-    score_p = score_probability(match)
-
-    timeline_p = timeline_probability(match)
-
-    stats_p = stats_probability(match)
-
-    # SCORE là tín hiệu chính.
-    # Timeline và stats là correction.
-    probability = (
-        score_p * 0.60
-        +
-        timeline_p * 0.20
-        +
-        stats_p * 0.20
-    )
-
-    probability = server_probability(
-        match,
-        probability
-    )
-
-    return clamp(
-        probability,
-        0.01,
-        0.99
-    )
-
-
-# ============================================================
-# MONTE CARLO
-# ============================================================
-
-def monte_carlo(
-    base_probability,
-    simulations=SIMULATIONS
+def calculate_probability(
+    match
 ):
 
-    wins_a = 0
+    score = parse_score(
+        match.score
+    )
 
-    for _ in range(simulations):
 
-        noise = random.gauss(
-            0,
-            0.018
+    # --------------------------------------------------------
+    # 1. SET STATE
+    # --------------------------------------------------------
+
+    p = 0.50
+
+
+    set_difference = (
+        score["sets1"]
+        -
+        score["sets2"]
+    )
+
+
+    # Set advantage is strongest signal.
+    p += (
+        set_difference
+        * 0.19
+    )
+
+
+    # --------------------------------------------------------
+    # 2. CURRENT GAME
+    # --------------------------------------------------------
+
+    game_difference = (
+        score["games1"]
+        -
+        score["games2"]
+    )
+
+
+    p += (
+        game_difference
+        * 0.025
+    )
+
+
+    # --------------------------------------------------------
+    # 3. CURRENT POINT
+    # --------------------------------------------------------
+
+    current_point = (
+        point_probability(
+            match.points
+        )
+    )
+
+
+    p += (
+        current_point
+        -
+        0.50
+    ) * 0.08
+
+
+    # --------------------------------------------------------
+    # 4. TIMELINE / MOMENTUM
+    # --------------------------------------------------------
+
+    timeline = analyze_timeline(
+        match
+    )
+
+
+    timeline_total = (
+        timeline["score1"]
+        +
+        timeline["score2"]
+    )
+
+
+    if timeline_total > 0:
+
+        tp = (
+            timeline["score1"]
+            /
+            timeline_total
         )
 
-        p = clamp(
-            base_probability + noise,
-            0.01,
-            0.99
+
+        p += (
+            tp
+            -
+            0.50
+        ) * 0.16
+
+
+    # --------------------------------------------------------
+    # 5. LIVE STATS
+    # --------------------------------------------------------
+
+    stats = analyze_stats(
+        match
+    )
+
+
+    # First serve
+    serve_total = (
+        stats["serve1"]
+        +
+        stats["serve2"]
+    )
+
+
+    if serve_total > 0:
+
+        sp = (
+            stats["serve1"]
+            /
+            serve_total
         )
 
-        if random.random() < p:
-            wins_a += 1
 
-    return wins_a / simulations
+        p += (
+            sp
+            -
+            0.50
+        ) * 0.08
+
+
+    # Aces
+    ace_total = (
+        stats["aces1"]
+        +
+        stats["aces2"]
+    )
+
+
+    if ace_total > 0:
+
+        ap = (
+            stats["aces1"]
+            /
+            ace_total
+        )
+
+
+        p += (
+            ap
+            -
+            0.50
+        ) * 0.04
+
+
+    # Double faults
+    df_total = (
+        stats["df1"]
+        +
+        stats["df2"]
+    )
+
+
+    if df_total > 0:
+
+        dp = (
+            stats["df2"]
+            /
+            df_total
+        )
+
+
+        p += (
+            dp
+            -
+            0.50
+        ) * 0.04
+
+
+    # Break point conversion
+    bp_total = (
+        stats["bp1"]
+        +
+        stats["bp2"]
+    )
+
+
+    if bp_total > 0:
+
+        bp = (
+            stats["bp1"]
+            /
+            bp_total
+        )
+
+
+        p += (
+            bp
+            -
+            0.50
+        ) * 0.06
+
+
+    # --------------------------------------------------------
+    # 6. SERVER INDICATOR
+    # --------------------------------------------------------
+
+    indicator = (
+        str(
+            match.indicator
+        )
+        .strip()
+    )
+
+
+    # Không ép probability theo indicator
+    # nếu không biết chính xác format của API.
+
+
+    return clamp(
+        p
+    )
 
 
 # ============================================================
 # CONFIDENCE
 # ============================================================
 
-def confidence_label(probability):
+def confidence(
+    p
+):
 
     edge = abs(
-        probability - 0.50
+        p - 0.50
     )
 
+
     if edge >= 0.30:
+
         return "VERY HIGH"
 
+
     if edge >= 0.20:
+
         return "HIGH"
 
+
     if edge >= 0.10:
+
         return "MEDIUM"
+
 
     return "LOW"
 
@@ -827,83 +1284,84 @@ def confidence_label(probability):
 # DIAGNOSIS
 # ============================================================
 
-def diagnose(match):
+def diagnose(
+    match
+):
 
-    base = calculate_live_probability(
+    p1 = calculate_probability(
         match
     )
 
-    sim_a = monte_carlo(
-        base
+
+    p2 = (
+        1.0 - p1
     )
 
-    sim_b = 1 - sim_a
 
-    if sim_a >= sim_b:
+    if p1 >= p2:
 
-        winner = match.player_a
+        winner = match.player1
 
-        winner_probability = sim_a
+        winner_p = p1
 
     else:
 
-        winner = match.player_b
+        winner = match.player2
 
-        winner_probability = sim_b
+        winner_p = p2
 
-    confidence = confidence_label(
-        winner_probability
-    )
-
-    timeline = analyze_timeline(
-        match
-    )
-
-    stats = analyze_stats(
-        match
-    )
 
     return {
-
         "winner": winner,
 
-        "a_probability": sim_a,
+        "p1": p1,
 
-        "b_probability": sim_b,
+        "p2": p2,
+
+        "confidence": confidence(
+            winner_p
+        ),
 
         "winner_probability":
-            winner_probability,
-
-        "confidence": confidence,
-
-        "timeline": timeline,
-
-        "stats": stats
+            winner_p
     }
 
 
 # ============================================================
-# STATE FINGERPRINT
+# FINGERPRINT
 # ============================================================
 
-def match_fingerprint(match):
+def fingerprint(
+    match
+):
 
-    timeline_last = ""
+    last_timeline = ""
+
 
     if match.timeline:
 
         last = match.timeline[-1]
 
-        timeline_last = str(
-            last.get("text", "")
-        )
+
+        if isinstance(
+            last,
+            dict
+        ):
+
+            last_timeline = str(
+                last.get(
+                    "text",
+                    ""
+                )
+            )
+
 
     return (
         match.score,
         match.points,
         match.indicator,
         match.status,
-        timeline_last,
+        last_timeline,
         len(match.timeline)
     )
 
@@ -912,31 +1370,27 @@ def match_fingerprint(match):
 # TELEGRAM
 # ============================================================
 
-def send_telegram(text):
+def send_telegram(
+    message
+):
 
-    if (
-        not TELEGRAM_BOT_TOKEN
-        or
-        TELEGRAM_BOT_TOKEN.startswith("PASTE_")
-    ):
+    if not TELEGRAM_BOT_TOKEN:
 
         log.warning(
-            "Telegram bot token chưa được cấu hình"
+            "Telegram token chưa được cấu hình"
         )
 
         return False
 
-    if (
-        not TELEGRAM_CHAT_ID
-        or
-        TELEGRAM_CHAT_ID.startswith("PASTE_")
-    ):
+
+    if not TELEGRAM_CHAT_ID:
 
         log.warning(
             "Telegram chat ID chưa được cấu hình"
         )
 
         return False
+
 
     url = (
         "https://api.telegram.org/bot"
@@ -945,6 +1399,7 @@ def send_telegram(text):
         +
         "/sendMessage"
     )
+
 
     try:
 
@@ -956,27 +1411,35 @@ def send_telegram(text):
                 "chat_id":
                     TELEGRAM_CHAT_ID,
 
-                "text": text
+                "text":
+                    message,
+
+                "disable_web_page_preview":
+                    True
             },
 
             timeout=10
         )
 
+
         if response.status_code != 200:
 
             log.error(
-                "Telegram error: %s",
+                "Telegram HTTP %s: %s",
+                response.status_code,
                 response.text[:300]
             )
 
             return False
 
+
         return True
+
 
     except Exception as e:
 
         log.error(
-            "Telegram exception: %s",
+            "Telegram error: %s",
             e
         )
 
@@ -984,52 +1447,67 @@ def send_telegram(text):
 
 
 # ============================================================
-# FORMAT TELEGRAM
+# FORMAT
 # ============================================================
 
-def format_prediction(
+def format_message(
     match,
     result
 ):
 
-    a = (
-        result["a_probability"]
-        * 100
+    p1 = (
+        result["p1"] * 100
     )
 
-    b = (
-        result["b_probability"]
-        * 100
+    p2 = (
+        result["p2"] * 100
     )
 
-    stats = result["stats"]
 
-    timeline = result["timeline"]
+    timeline = analyze_timeline(
+        match
+    )
+
+
+    stats = analyze_stats(
+        match
+    )
+
+
+    last_event = (
+        timeline["recent"][-1]
+        if timeline["recent"]
+        else "N/A"
+    )
+
 
     return f"""
-🎾 LIVE TENNIS AI
+🎾 TENNIS LIVE AI
 
 🏟 {match.league}
+🏆 {match.tour_type}
 
-👤 {match.player_a}
+👤 {match.player1}
 vs
-👤 {match.player_b}
+👤 {match.player2}
+
+━━━━━━━━━━━━━━
 
 📊 SCORE
 {match.score}
 
 🎯 POINT
-{match.points}
+{match.points or "N/A"}
 
 📡 STATUS
 {match.status}
 
 ━━━━━━━━━━━━━━
 
-🏆 WIN PROBABILITY
+🏆 LIVE WIN PROBABILITY
 
-{match.player_a}: {a:.1f}%
-{match.player_b}: {b:.1f}%
+{match.player1}: {p1:.1f}%
+{match.player2}: {p2:.1f}%
 
 🥇 CURRENT DIAGNOSIS
 {result["winner"]}
@@ -1039,183 +1517,358 @@ vs
 
 ━━━━━━━━━━━━━━
 
-📈 LIVE STATS
+📈 LIVE DATA
 
 ACES
-{match.player_a}: {stats["a_aces"]:.0f}
-{match.player_b}: {stats["b_aces"]:.0f}
+{match.player1}: {stats["aces1"]:.0f}
+{match.player2}: {stats["aces2"]:.0f}
 
 DOUBLE FAULTS
-{match.player_a}: {stats["a_df"]:.0f}
-{match.player_b}: {stats["b_df"]:.0f}
+{match.player1}: {stats["df1"]:.0f}
+{match.player2}: {stats["df2"]:.0f}
 
 1ST SERVE WON
-{match.player_a}: {stats["a_first_serve"]:.0f}%
-{match.player_b}: {stats["b_first_serve"]:.0f}%
+{match.player1}: {stats["serve1"]:.0f}%
+{match.player2}: {stats["serve2"]:.0f}%
 
 ━━━━━━━━━━━━━━
 
-🔄 LIVE MODEL
-Monte Carlo: {SIMULATIONS:,}
+📡 LAST EVENT
+{last_event}
 
-Timeline events:
-{len(match.timeline)}
-
-Last event:
-{timeline["recent"][-1] if timeline["recent"] else "N/A"}
+🔄 AUTO UPDATE
+Every {POLL_SECONDS}s
 """.strip()
 
 
 # ============================================================
-# MAIN ENGINE
+# ENRICH LIVE MATCH
+# ============================================================
+
+def enrich_match(
+    api,
+    match
+):
+
+    # --------------------------------------------------------
+    # LIVE SCORE
+    # --------------------------------------------------------
+
+    live = api.live_score(
+        match.event_id
+    )
+
+
+    if live:
+
+        merge_live_data(
+            match,
+            live
+        )
+
+
+    # --------------------------------------------------------
+    # TIMELINE
+    # --------------------------------------------------------
+
+    timeline = api.timeline(
+        match.event_id
+    )
+
+
+    if timeline:
+
+        payload = unwrap(
+            timeline
+        )
+
+
+        if isinstance(
+            payload,
+            dict
+        ):
+
+            events = first_value(
+                payload,
+                [
+                    "timeline",
+                    "events",
+                    "data"
+                ]
+            )
+
+
+            if isinstance(
+                events,
+                list
+            ):
+
+                match.timeline = events
+
+
+        elif isinstance(
+            payload,
+            list
+        ):
+
+            match.timeline = payload
+
+
+# ============================================================
+# MAIN
 # ============================================================
 
 def main():
 
     log.info(
-        "===================================="
+        "=========================================="
     )
 
     log.info(
-        "TENNIS LIVE AI STARTED"
+        "TENNIS LIVE AI v3 STARTED"
     )
 
     log.info(
-        "RapidAPI host: %s",
-        RAPIDAPI_HOST
+        "HOST: %s",
+        HOST
     )
 
     log.info(
-        "Polling: %s seconds",
+        "POLL: %ss",
         POLL_SECONDS
     )
 
     log.info(
-        "Monte Carlo: %s",
-        SIMULATIONS
+        "=========================================="
     )
 
-    log.info(
-        "===================================="
-    )
+
+    if not RAPIDAPI_KEY:
+
+        log.error(
+            "RAPIDAPI_KEY is missing"
+        )
+
+        return
+
 
     api = TennisAPI()
 
-    previous_states = {}
+
+    previous = {}
+
 
     while True:
 
         try:
 
-            raw_events = api.live_events()
+            events = (
+                api.live_events()
+            )
 
-            if not raw_events:
 
-                log.info(
-                    "Không tìm thấy live events."
-                )
+            log.info(
+                "LIVE EVENTS: %d",
+                len(events)
+            )
 
-            else:
 
-                log.info(
-                    "Live events: %s",
-                    len(raw_events)
-                )
+            active_ids = set()
 
-            current_ids = set()
 
-            for raw in raw_events:
+            for raw in events:
 
                 match = parse_match(
                     raw
                 )
 
+
                 if not match:
+
                     continue
 
-                current_ids.add(
+
+                active_ids.add(
                     match.event_id
                 )
 
-                if not is_live(match):
+
+                # ------------------------------------------------
+                # STATUS
+                # ------------------------------------------------
+
+                status = (
+                    match.status
+                    .lower()
+                    .strip()
+                )
+
+
+                if status in {
+                    "ended",
+                    "finished",
+                    "completed",
+                    "cancelled",
+                    "postponed"
+                }:
 
                     continue
 
-                fingerprint = (
-                    match_fingerprint(
-                        match
-                    )
+
+                # ------------------------------------------------
+                # GET LIVE SCORE + TIMELINE
+                # ------------------------------------------------
+
+                enrich_match(
+                    api,
+                    match
                 )
 
-                old_fingerprint = (
-                    previous_states.get(
-                        match.event_id
-                    )
+
+                # ------------------------------------------------
+                # DIAGNOSIS
+                # ------------------------------------------------
+
+                state = fingerprint(
+                    match
                 )
 
-                changed = (
-                    fingerprint
-                    != old_fingerprint
-                )
-
-                previous_states[
-                    match.event_id
-                ] = fingerprint
-
-                if (
-                    SEND_ONLY_ON_CHANGE
-                    and
-                    not changed
-                ):
-
-                    continue
 
                 result = diagnose(
                     match
                 )
 
+
+                old = previous.get(
+                    match.event_id
+                )
+
+
+                probability_changed = True
+
+
+                if old:
+
+                    old_p1 = old.get(
+                        "p1",
+                        0.50
+                    )
+
+
+                    probability_changed = (
+                        abs(
+                            result["p1"]
+                            -
+                            old_p1
+                        )
+                        >=
+                        MIN_PROBABILITY_CHANGE
+                    )
+
+
+                state_changed = (
+                    old is None
+                    or
+                    old.get("state")
+                    !=
+                    state
+                )
+
+
+                # ------------------------------------------------
+                # LOG
+                # ------------------------------------------------
+
                 log.info(
-                    "%s vs %s | %s | A %.1f%% | B %.1f%%",
-                    match.player_a,
-                    match.player_b,
+                    "%s vs %s | %s | "
+                    "%.1f%% / %.1f%% | %s",
+                    match.player1,
+                    match.player2,
                     result["winner"],
-                    result["a_probability"] * 100,
-                    result["b_probability"] * 100
+                    result["p1"] * 100,
+                    result["p2"] * 100,
+                    match.score
                 )
 
-                message = format_prediction(
-                    match,
-                    result
+
+                # ------------------------------------------------
+                # TELEGRAM
+                # ------------------------------------------------
+
+                should_send = (
+
+                    old is None
+
+                    or
+
+                    (
+                        SEND_ONLY_ON_CHANGE
+                        and
+                        state_changed
+                        and
+                        probability_changed
+                    )
+
                 )
 
-                send_telegram(
-                    message
-                )
 
-            previous_states = {
+                if should_send:
+
+                    send_telegram(
+                        format_message(
+                            match,
+                            result
+                        )
+                    )
+
+
+                previous[
+                    match.event_id
+                ] = {
+
+                    "state":
+                        state,
+
+                    "p1":
+                        result["p1"],
+
+                    "winner":
+                        result["winner"]
+                }
+
+
+            # ----------------------------------------------------
+            # REMOVE OLD EVENTS
+            # ----------------------------------------------------
+
+            previous = {
 
                 k: v
 
                 for k, v
-                in previous_states.items()
+                in previous.items()
 
-                if k in current_ids
+                if k in active_ids
+
             }
+
 
         except KeyboardInterrupt:
 
             log.info(
-                "Bot stopped."
+                "BOT STOPPED"
             )
 
             break
 
+
         except Exception as e:
 
             log.exception(
-                "MAIN LOOP ERROR: %s",
+                "MAIN ERROR: %s",
                 e
             )
+
 
         time.sleep(
             POLL_SECONDS
