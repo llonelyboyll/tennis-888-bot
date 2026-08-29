@@ -4,10 +4,21 @@ from flask import Flask, request
 
 app = Flask(__name__)
 
-TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
+TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '8934220044:AAH4Ie4513gfnH-bJu1wcPoCSnKXcvlHtFM')
 RAPIDAPI_KEY = "1b38cdb058mshdff41dd9b75d9kcjp159177jun2b3cb7c6a741"
 HOST = "tennis-api-atp-wta-itf.p.rapidapi.com"
 BASE_URL = f"https://{HOST}/tennis/v2/extend/api"
+WEBHOOK_URL = "https://tennis-888-bot-production.up.railway.app/webhook"
+
+def setup_webhook_automatically():
+    if TELEGRAM_BOT_TOKEN:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook?url={WEBHOOK_URL}&drop_pending_updates=true"
+        try:
+            requests.get(url, timeout=5)
+        except Exception as e:
+            print(f"Lỗi tự động set webhook: {e}")
+
+setup_webhook_automatically()
 
 def send_telegram_message(chat_id, text):
     if not TELEGRAM_BOT_TOKEN:
@@ -46,7 +57,6 @@ def fetch_live_match_stats(player1, player2):
                             "status": ev.get("status", "Đang diễn ra"),
                             "score": str(score)
                         }
-                # Lấy tạm trận live đầu tiên nếu không khớp tên tuyệt đối
                 ev = events[0]
                 return {
                     "p1_name": ev.get("participant1", player1),
